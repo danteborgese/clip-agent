@@ -1,4 +1,13 @@
-const ytdl = require("ytdl-core");
+const { execSync } = require("child_process");
+
+function getVideoId(url) {
+  const match = url.match(/(?:v=|\/embed\/|\/v\/|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+  return match ? match[1] : null;
+}
+
+function isValidYoutubeUrl(url) {
+  return /^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\/.+/.test(url) && getVideoId(url);
+}
 
 async function fetchTranscript(videoId) {
   const mod = await import("youtube-transcript");
@@ -12,32 +21,58 @@ async function fetchTranscript(videoId) {
   }));
 }
 
+function getMetadataWithYtDlp(url) {
+  const out = execSync(`yt-dlp -j --no-download "${url}"`, { encoding: "utf-8" });
+  const data = JSON.parse(out);
+  return {
+    videoId: data.id,
+    title: data.title || "Untitled",
+    channel: data.uploader || data.channel || null,
+    durationSeconds: typeof data.duration === "number" ? data.duration : 0,
+  };
+}
+
+async function getMetadataWithYtdl(url) {
+  const ytdl = require("ytdl-core");
+  const info = await ytdl.getInfo(url);
+  return {
+    videoId: info.videoDetails.videoId,
+    title: info.videoDetails.title,
+    channel: info.videoDetails.author?.name || null,
+    durationSeconds: Number(info.videoDetails.lengthSeconds || 0),
+  };
+}
+
 async function fetchYoutubeMetadataAndTranscript(url) {
-  if (!ytdl.validateURL(url)) {
+  if (!isValidYoutubeUrl(url)) {
     throw new Error("Invalid YouTube URL");
   }
 
-  const info = await ytdl.getInfo(url);
-  const videoId = info.videoDetails.videoId;
-  const title = info.videoDetails.title;
-  const channel = info.videoDetails.author?.name || null;
-  const durationSeconds = Number(info.videoDetails.lengthSeconds || 0);
+  const videoId = getVideoId(url);
+  let meta;
+
+  try {
+    execSync("which yt-dlp", { stdio: "pipe" });
+    meta = getMetadataWithYtDlp(url);
+  } catch (_) {
+    meta = await getMetadataWithYtdl(url);
+  }
 
   let transcript = [];
   try {
-    transcript = await fetchTranscript(videoId);
+    transcript = await fetchTranscript(meta.videoId);
   } catch (err) {
     throw new Error(
-      `Failed to fetch YouTube transcript (videoId=${videoId}). The video may not have captions.`
+      `Failed to fetch YouTube transcript (videoId=${meta.videoId}). The video may not have captions.`
     );
   }
 
   const metadata = {
     platform: "youtube",
-    videoId,
-    title,
-    channel,
-    durationSeconds,
+    videoId: meta.videoId,
+    title: meta.title,
+    channel: meta.channel,
+    durationSeconds: meta.durationSeconds,
     url,
   };
 
