@@ -78,7 +78,11 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ jobId, status: "queued" }, { status: 201 });
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
     console.error("Error in /api/clip-jobs", err);
-    return NextResponse.json({ error: "Unexpected error" }, { status: 500 });
+    return NextResponse.json(
+      { error: process.env.NODE_ENV === "development" ? message : "Unexpected error" },
+      { status: 500 }
+    );
   }
 }
