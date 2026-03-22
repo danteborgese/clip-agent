@@ -16,7 +16,6 @@ function buildYtDlpCookieArgs() {
   return args.join(" ");
 }
 
-// Match YouTube video ID from common URL forms
 function getVideoId(url) {
   const match = url.match(/(?:v=|\/embed\/|\/v\/|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
   return match ? match[1] : null;
@@ -35,11 +34,8 @@ async function downloadWithYtDlp(url) {
   const outPath = path.join(outDir, `${id}.mp4`);
   const cookieArgs = buildYtDlpCookieArgs();
   try {
-    // STEP 8 – yt-dlp download start
-    console.log("STEP 8 – yt-dlp download start", { url, id, outPath, cookieArgs });
+    console.log("yt-dlp download start", { url, id, outPath });
     const cmd =
-      // Prefer H.264 video (avc1) + AAC audio (mp4a), max 720p, for good
-      // compatibility with QuickTime and smaller file sizes.
       `yt-dlp ${cookieArgs ? `${cookieArgs} ` : ""}-f "bv*[vcodec^=avc1][height<=720]+ba[acodec^=mp4a]/b[vcodec^=avc1][acodec^=mp4a]/b[ext=mp4]" ` +
       `--merge-output-format mp4 -o "${outPath}" "${url}"`;
     execSync(cmd, { stdio: "inherit" });
@@ -47,32 +43,11 @@ async function downloadWithYtDlp(url) {
   if (!fs.existsSync(outPath) || fs.statSync(outPath).size === 0) {
     throw new Error("yt-dlp did not produce a valid file");
   }
-  // STEP 8 – yt-dlp download complete
-  console.log("STEP 8 – yt-dlp download complete", {
+  console.log("yt-dlp download complete", {
     url,
     id,
     outPath,
     sizeBytes: fs.statSync(outPath).size,
-  });
-  return outPath;
-}
-
-async function downloadWithYtdl(url) {
-  const ytdl = require("ytdl-core");
-  if (!ytdl.validateURL(url)) throw new Error("Invalid YouTube URL");
-  const id = ytdl.getURLVideoID(url);
-  const outDir = path.join(process.cwd(), "tmp");
-  if (!fs.existsSync(outDir)) {
-    fs.mkdirSync(outDir, { recursive: true });
-  }
-  const outPath = path.join(outDir, `${id}.mp4`);
-  const stream = ytdl(url, { quality: "highest", filter: "audioandvideo" });
-  await new Promise((resolve, reject) => {
-    const write = fs.createWriteStream(outPath);
-    stream.pipe(write);
-    stream.on("error", reject);
-    write.on("finish", resolve);
-    write.on("error", reject);
   });
   return outPath;
 }
@@ -90,26 +65,22 @@ async function downloadYoutubeVideo(url) {
     useYtDlp = true;
   } catch (_) {}
 
-  if (useYtDlp) {
-    try {
-      return await downloadWithYtDlp(url);
-    } catch (err) {
-      if (isCI) {
-        throw new Error(
-          "YouTube blocked the request (common from GitHub Actions). Run locally with: JOB_ID=<job-id> npm run process-job"
-        );
-      }
-      throw err;
-    }
-  }
-
-  if (isCI) {
+  if (!useYtDlp) {
     throw new Error(
-      "yt-dlp not found in CI. Run the job locally with: JOB_ID=<job-id> npm run process-job"
+      "yt-dlp is required but not found on PATH. Install it with: brew install yt-dlp"
     );
   }
 
-  return await downloadWithYtdl(url);
+  try {
+    return await downloadWithYtDlp(url);
+  } catch (err) {
+    if (isCI) {
+      throw new Error(
+        "YouTube blocked the request (common from GitHub Actions). Run locally with: JOB_ID=<job-id> npm run run-job"
+      );
+    }
+    throw err;
+  }
 }
 
 module.exports = {

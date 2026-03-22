@@ -37,8 +37,7 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
-          GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+          SUPABASE_CLIPS_BUCKET: ${{ secrets.SUPABASE_CLIPS_BUCKET }}
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_CLIPS_DB_ID: ${{ secrets.NOTION_CLIPS_DB_ID }}
-        run: npm run process-job
+        run: npx tsx scripts/run-job.ts

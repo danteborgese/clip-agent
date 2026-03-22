@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 
 import { parseYoutubeVideoId } from "@/lib/youtube/parseVideoId";
+import { runPipeline } from "@/lib/pipeline/orchestrator";
 
 export type CreateClipJobInput = {
   url: string;
@@ -40,7 +41,7 @@ export async function createClipJob(input: CreateClipJobInput): Promise<CreateCl
 
   const { data, error } = await supabase
     .from("jobs")
-    .insert({ url, instruction, status: "pending" })
+    .insert({ url, instruction, status: "pending", step: "ingest" })
     .select("id")
     .single();
 
@@ -50,7 +51,30 @@ export async function createClipJob(input: CreateClipJobInput): Promise<CreateCl
   }
 
   const jobId = data.id as string;
-  console.log("STEP 1 – job created", { jobId, url, instruction });
+  console.log("Job created", { jobId, url, instruction });
+
+  // Fire-and-forget: run pipeline in background
+  // Wrapped in try/catch + .catch() to prevent any error from crashing the server
+  try {
+    runPipeline(jobId).catch(async (err) => {
+      console.error(`Pipeline failed for job ${jobId}:`, err);
+      // Ensure job is marked failed even if orchestrator's error handling didn't run
+      try {
+        await supabase
+          .from("jobs")
+          .update({
+            status: "failed",
+            error: err instanceof Error ? err.message : String(err),
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", jobId);
+      } catch {
+        // Last resort — ignore DB errors during failure recording
+      }
+    });
+  } catch (err) {
+    console.error(`Pipeline launch failed for job ${jobId}:`, err);
+  }
 
   return { ok: true, jobId };
 }

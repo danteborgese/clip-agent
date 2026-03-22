@@ -35,7 +35,7 @@ async function createNotionClipPage({
   title,
   description,
   sourceUrl,
-  driveLink,
+  clipUrl,
   metadata,
   candidates,
   tags,
@@ -55,7 +55,7 @@ async function createNotionClipPage({
       url: sourceUrl,
     },
     "Clip URL": {
-      url: driveLink,
+      url: clipUrl,
     },
   };
 
