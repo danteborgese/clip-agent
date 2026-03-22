@@ -18,6 +18,15 @@ Turn a single media link (YouTube for now) + a natural-language instruction into
 - Inbox (form + API): `npm run dev` → http://localhost:3001
 - Worker runs in GitHub Actions when you submit a job (or trigger the workflow manually with a `job_id`).
 
+**If the GitHub Action fails with "YouTube blocked the request"** (common from data-center IPs), run the job on your machine instead. Set the same env vars (e.g. in `.env.local` or export them), then:
+
+```bash
+cd clip-agent
+JOB_ID=<paste-the-job-id-from-the-form> npm run process-job
+```
+
+Use the job ID returned when you submitted the form (e.g. `8c444484-9c92-4c37-8d77-af40058f98bb`).
+
 ## Push to a new GitHub repo
 
 The `clip-agent` folder is meant to live in its own GitHub repo. Your personal-website repo ignores it via `.gitignore`.
