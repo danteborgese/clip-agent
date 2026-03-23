@@ -10,10 +10,13 @@ create table if not exists jobs (
   platform text not null default 'youtube',
   metadata jsonb,
   selected_candidate_id uuid,
-  drive_file_id text,
-  drive_link text,
+  clip_storage_path text,
+  clip_url text,
   notion_page_id text,
   error text,
+  step text default 'ingest',
+  step_output jsonb default '{}'::jsonb,
+  step_details jsonb default '[]'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

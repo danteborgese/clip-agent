@@ -1,35 +1,14 @@
 const { execSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
+const { buildYtDlpCookieArgs, getVideoId, isValidYoutubeUrl } = require("./ytUtils.cjs");
 
 const isCI = process.env.CI === "true";
-const YT_DLP_COOKIES_FILE = process.env.YT_DLP_COOKIES_FILE;
-const YT_DLP_COOKIES_FROM_BROWSER = process.env.YT_DLP_COOKIES_FROM_BROWSER;
-
-function buildYtDlpCookieArgs() {
-  const args = [];
-  if (YT_DLP_COOKIES_FROM_BROWSER) {
-    args.push(`--cookies-from-browser "${YT_DLP_COOKIES_FROM_BROWSER}"`);
-  }
-  if (YT_DLP_COOKIES_FILE) {
-    args.push(`--cookies "${YT_DLP_COOKIES_FILE}"`);
-  }
-  return args.join(" ");
-}
-
-function getVideoId(url) {
-  const match = url.match(/(?:v=|\/embed\/|\/v\/|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
-  return match ? match[1] : null;
-}
-
-function isValidYoutubeUrl(url) {
-  return /^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\/.+/.test(url) && getVideoId(url);
-}
 
 async function fetchTranscript(videoId, url) {
   try {
-    const mod = await import("youtube-transcript");
-    const { YoutubeTranscript } = mod;
+    const mod = await import("youtube-transcript/dist/youtube-transcript.esm.js");
+    const YoutubeTranscript = mod.YoutubeTranscript || mod.default?.YoutubeTranscript;
     const entries = await YoutubeTranscript.fetchTranscript(videoId);
 
     return entries.map((e) => ({
@@ -38,12 +17,9 @@ async function fetchTranscript(videoId, url) {
       text: e.text,
     }));
   } catch (err) {
-    // Fallback: try to fetch auto-generated subtitles via yt-dlp, which can
-    // use browser cookies to get around some YouTube restrictions.
     try {
       return fetchTranscriptWithYtDlp(url, videoId);
     } catch (fallbackErr) {
-      // Re-throw the original error to keep behavior understandable.
       throw err;
     }
   }
@@ -77,7 +53,6 @@ function fetchTranscriptWithYtDlp(url, videoId) {
 }
 
 function parseTimestampToSeconds(ts) {
-  // Format: HH:MM:SS.mmm or MM:SS.mmm
   const parts = ts.split(":");
   let hours = 0;
   let minutes = 0;
@@ -113,7 +88,6 @@ function parseVttToTranscript(vttText) {
       continue;
     }
 
-    // Skip header and cue identifiers (non-timestamp single lines)
     const arrowIdx = line.indexOf("-->");
     if (arrowIdx !== -1) {
       const [startRaw, endRaw] = line.split("-->").map((s) => s.trim());
@@ -148,24 +122,12 @@ function getMetadataWithYtDlp(url) {
   };
 }
 
-async function getMetadataWithYtdl(url) {
-  const ytdl = require("ytdl-core");
-  const info = await ytdl.getInfo(url);
-  return {
-    videoId: info.videoDetails.videoId,
-    title: info.videoDetails.title,
-    channel: info.videoDetails.author?.name || null,
-    durationSeconds: Number(info.videoDetails.lengthSeconds || 0),
-  };
-}
-
 async function fetchYoutubeMetadataAndTranscript(url) {
   if (!isValidYoutubeUrl(url)) {
     throw new Error("Invalid YouTube URL");
   }
 
   const videoId = getVideoId(url);
-  let meta;
 
   let useYtDlp = false;
   try {
@@ -173,24 +135,22 @@ async function fetchYoutubeMetadataAndTranscript(url) {
     useYtDlp = true;
   } catch (_) {}
 
-  if (useYtDlp) {
-    try {
-      meta = getMetadataWithYtDlp(url);
-    } catch (err) {
-      if (isCI) {
-        throw new Error(
-          "YouTube blocked the request (common from GitHub Actions). Run locally with: JOB_ID=<job-id> npm run process-job"
-        );
-      }
-      meta = await getMetadataWithYtdl(url);
-    }
-  } else {
+  if (!useYtDlp) {
+    throw new Error(
+      "yt-dlp is required but not found on PATH. Install it with: brew install yt-dlp"
+    );
+  }
+
+  let meta;
+  try {
+    meta = getMetadataWithYtDlp(url);
+  } catch (err) {
     if (isCI) {
       throw new Error(
-        "yt-dlp not found in CI. Run the job locally with: JOB_ID=<job-id> npm run process-job"
+        "YouTube blocked the request (common from GitHub Actions). Run locally with: JOB_ID=<job-id> npm run run-job"
       );
     }
-    meta = await getMetadataWithYtdl(url);
+    throw err;
   }
 
   const transcript = await fetchTranscript(meta.videoId, url);

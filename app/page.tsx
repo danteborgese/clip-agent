@@ -1,82 +1,55 @@
 "use client";
 
-import { useActionState } from "react";
-
-import { createClipJobAction, type ClipJobFormState } from "@/app/actions/clip-jobs";
-
-const initialFormState: ClipJobFormState = { status: "idle" };
+import { useState } from "react";
+import Link from "next/link";
+import { HeroPanel } from "@/app/components/HeroPanel";
+import { FormHeader } from "@/app/components/FormHeader";
+import { SubmitForm } from "@/app/components/SubmitForm";
+import { JobTracker } from "@/app/components/JobTracker";
 
 export default function Home() {
-  const [state, formAction, isPending] = useActionState(createClipJobAction, initialFormState);
-
-  const formKey =
-    state.status === "success" ? state.jobId : "form";
-
-  const message =
-    state.status === "error"
-      ? state.message
-      : state.status === "success"
-        ? `Job queued: ${state.jobId}`
-        : "";
-
-  const status: "idle" | "loading" | "success" | "error" =
-    state.status === "error"
-      ? "error"
-      : state.status === "success"
-        ? "success"
-        : isPending
-          ? "loading"
-          : "idle";
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
 
   return (
-    <main className="min-h-screen p-8 max-w-xl mx-auto">
-      <h1 className="text-2xl font-semibold mb-6">Clip Agent</h1>
-      <form key={formKey} action={formAction} className="space-y-4">
-        <div>
-          <label htmlFor="url" className="block text-sm font-medium text-gray-700 mb-1">
-            Source URL (YouTube)
-          </label>
-          <input
-            id="url"
-            name="url"
-            type="url"
-            defaultValue=""
-            placeholder="https://www.youtube.com/watch?v=..."
-            required
-            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
+    <div className="flex min-h-screen w-full">
+      <HeroPanel />
+
+      <div className="w-full md:w-1/2 flex flex-col items-center justify-center px-6 py-12 sm:px-12">
+        <div className="w-full max-w-lg">
+          {/* Card container */}
+          <div className="animate-entrance delay-0 rounded-xl border border-[var(--border)] bg-white p-8 sm:p-10">
+            <FormHeader />
+
+            {!activeJobId && (
+              <SubmitForm onJobCreated={setActiveJobId} />
+            )}
+
+            {activeJobId && (
+              <div className="animate-entrance delay-0">
+                <JobTracker
+                  jobId={activeJobId}
+                  onNewClip={() => setActiveJobId(null)}
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Nav to past jobs — outside the card */}
+          <div className="mt-5 px-1">
+            <Link
+              href="/jobs"
+              className="inline-flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-black transition-colors"
+              style={{ fontFamily: "var(--font-mono)" }}
+            >
+              View past jobs
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M5 12h14" />
+                <path d="m12 5 7 7-7 7" />
+              </svg>
+            </Link>
+          </div>
         </div>
-        <div>
-          <label htmlFor="instruction" className="block text-sm font-medium text-gray-700 mb-1">
-            What to clip (instruction)
-          </label>
-          <textarea
-            id="instruction"
-            name="instruction"
-            defaultValue=""
-            placeholder="e.g. Clip the part where he talks about the limiting factor."
-            required
-            rows={3}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-        </div>
-        <button
-          type="submit"
-          disabled={isPending}
-          className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
-        >
-          {isPending ? "Submitting…" : "Submit"}
-        </button>
-      </form>
-      {message && (
-        <p
-          className={`mt-4 text-sm ${
-            status === "error" ? "text-red-600" : "text-gray-600"
-          }`}
-        >
-          {message}
-        </p>
-      )}
-    </main>
+      </div>
+    </div>
   );
 }
