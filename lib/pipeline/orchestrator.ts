@@ -8,6 +8,13 @@ import { publish } from "./steps/publish";
 
 const HANDLERS: Record<string, StepHandler> = { ingest, moments, clip, publish };
 
+const STEP_STATUS: Record<string, string> = {
+  ingest: "ingesting",
+  moments: "moments",
+  clip: "clipping",
+  publish: "notion",
+};
+
 function db() {
   return requireScript("db.cjs") as {
     getJobById: (id: string) => Promise<Job>;
@@ -19,30 +26,10 @@ function now() {
   return new Date().toISOString();
 }
 
-async function appendStepDetail(jobId: string, detail: StepDetail) {
+async function updateStepDetails(jobId: string, mutate: (details: StepDetail[]) => void) {
   const job = await db().getJobById(jobId);
   const details: StepDetail[] = Array.isArray(job.step_details) ? job.step_details : [];
-  details.push(detail);
-  await db().updateJob(jobId, { step_details: details });
-}
-
-async function completeStepDetail(jobId: string, step: PipelineStep, summary: string) {
-  const job = await db().getJobById(jobId);
-  const details: StepDetail[] = Array.isArray(job.step_details) ? job.step_details : [];
-  const idx = details.findLastIndex((d) => d.step === step && d.status === "active");
-  if (idx >= 0) {
-    details[idx] = { ...details[idx], status: "completed", completedAt: now(), summary };
-  }
-  await db().updateJob(jobId, { step_details: details });
-}
-
-async function failStepDetail(jobId: string, step: PipelineStep, errorMsg: string) {
-  const job = await db().getJobById(jobId);
-  const details: StepDetail[] = Array.isArray(job.step_details) ? job.step_details : [];
-  const idx = details.findLastIndex((d) => d.step === step && d.status === "active");
-  if (idx >= 0) {
-    details[idx] = { ...details[idx], status: "failed", completedAt: now(), error: errorMsg };
-  }
+  mutate(details);
   await db().updateJob(jobId, { step_details: details });
 }
 
@@ -60,13 +47,11 @@ export async function runPipeline(jobId: string): Promise<void> {
       throw new Error(`No handler for step: ${job.step}`);
     }
 
-    // Update step column + append active detail in one write so the UI reflects progress immediately
-    {
-      const freshJob = await db().getJobById(jobId);
-      const details: StepDetail[] = Array.isArray(freshJob.step_details) ? freshJob.step_details : [];
+    // Set status + append active detail in one write
+    await updateStepDetails(jobId, (details) => {
       details.push({ step: job.step, status: "active", startedAt: now() });
-      await db().updateJob(jobId, { step: job.step, step_details: details });
-    }
+    });
+    await db().updateJob(jobId, { step: job.step, status: STEP_STATUS[job.step] ?? job.step });
 
     try {
       const accumulated: StepOutput = (job.step_output as StepOutput) ?? {};
@@ -74,7 +59,12 @@ export async function runPipeline(jobId: string): Promise<void> {
       const currentIdx = STEP_ORDER.indexOf(job.step);
       const nextStep = STEP_ORDER[currentIdx + 1] as PipelineStep;
 
-      await completeStepDetail(jobId, job.step, result.summary);
+      await updateStepDetails(jobId, (details) => {
+        const idx = details.findLastIndex((d) => d.step === job.step && d.status === "active");
+        if (idx >= 0) {
+          details[idx] = { ...details[idx], status: "completed", completedAt: now(), summary: result.summary };
+        }
+      });
 
       const patch: Record<string, unknown> = {
         step: nextStep,
@@ -87,7 +77,12 @@ export async function runPipeline(jobId: string): Promise<void> {
       job = await db().updateJob(jobId, patch);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      await failStepDetail(jobId, job.step, message);
+      await updateStepDetails(jobId, (details) => {
+        const idx = details.findLastIndex((d) => d.step === job.step && d.status === "active");
+        if (idx >= 0) {
+          details[idx] = { ...details[idx], status: "failed", completedAt: now(), error: message };
+        }
+      });
       await db().updateJob(jobId, { status: "failed", error: message });
       throw err;
     }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { PIPELINE_STEPS } from "@/lib/pipeline-steps";
+import { PIPELINE_STEPS } from "@/lib/pipeline/steps-config";
 import { STEP_ORDER } from "@/lib/pipeline/types";
 
 describe("Pipeline Steps Config", () => {

@@ -12,8 +12,6 @@ export const moments: StepHandler = async (job, accumulated) => {
   }>;
   const metadata = accumulated.metadata as Record<string, unknown>;
 
-  await updateJob(job.id, { status: "moments" });
-
   const candidates = await generateCandidates({
     transcript,
     instruction: job.instruction,
@@ -22,11 +20,9 @@ export const moments: StepHandler = async (job, accumulated) => {
 
   const storedCandidates = await insertCandidatesForJob(job.id, candidates);
 
-  const best = [...storedCandidates].sort((a: { score?: number }, b: { score?: number }) => {
-    const sa = typeof a.score === "number" ? a.score : 0;
-    const sb = typeof b.score === "number" ? b.score : 0;
-    return sb - sa;
-  })[0];
+  const best = [...storedCandidates].sort(
+    (a: { score?: number }, b: { score?: number }) => (b.score ?? 0) - (a.score ?? 0)
+  )[0];
 
   if (!best) {
     throw new Error("No candidate moments generated for this job");

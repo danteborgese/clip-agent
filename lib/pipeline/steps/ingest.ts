@@ -19,7 +19,7 @@ export const ingest: StepHandler = async (job) => {
     );
   }
 
-  await updateJob(job.id, { metadata, status: "ingesting" });
+  await updateJob(job.id, { metadata });
 
   const segmentCount = Array.isArray(transcript) ? transcript.length : 0;
 

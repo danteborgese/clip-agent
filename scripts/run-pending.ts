@@ -14,15 +14,11 @@ if (fs.existsSync(envLocal)) {
   require("dotenv").config({ path: envLocal });
 }
 
-import { createClient } from "@supabase/supabase-js";
 import { runPipeline } from "../lib/pipeline/orchestrator";
+import { requireScript } from "../lib/pipeline/require-cjs";
 
 async function main() {
-  const supabaseUrl = process.env.SUPABASE_URL ?? "";
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-  const supabase = createClient(supabaseUrl, serviceKey, {
-    auth: { persistSession: false },
-  });
+  const { supabase } = requireScript("supabaseClient.cjs");
 
   // Find oldest pending job
   const { data: rows, error } = await supabase

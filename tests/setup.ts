@@ -16,7 +16,7 @@ const ROOT = path.resolve(__dirname, "..");
 const SCRIPTS_LIB = path.join(ROOT, "scripts", "lib");
 
 // Shared mock functions that tests can access via require()
-const mocks: Record<string, Record<string, ReturnType<typeof vi.fn>>> = {
+const mocks: Record<string, Record<string, unknown>> = {
   "youtube.cjs": {
     fetchYoutubeMetadataAndTranscript: vi.fn().mockResolvedValue({ metadata: {}, transcript: [] }),
     getVideoId: vi.fn(),
@@ -56,7 +56,8 @@ export { mocks as cjsMocks };
 // Patch require to intercept scripts/lib/*.cjs
 const originalResolveFilename = (Module as unknown as { _resolveFilename: (...args: unknown[]) => string })._resolveFilename;
 
-(Module as unknown as { _resolveFilename: (...args: unknown[]) => string })._resolveFilename = function (
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+(Module as any)._resolveFilename = function (
   request: string,
   parent: { filename?: string },
   ...rest: unknown[]

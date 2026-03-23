@@ -1,4 +1,4 @@
-import type { PipelineStep } from "./pipeline/types";
+import type { PipelineStep } from "./types";
 
 export interface StepConfig {
   key: PipelineStep;

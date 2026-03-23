@@ -70,7 +70,7 @@ describe("ingest step", () => {
 
     await ingest(makeJob(), {} as StepOutput);
 
-    expect(mockUpdateJob).toHaveBeenCalledWith("job-1", { metadata: meta, status: "ingesting" });
+    expect(mockUpdateJob).toHaveBeenCalledWith("job-1", { metadata: meta });
   });
 
   it("throws if video exceeds 5 hours", async () => {

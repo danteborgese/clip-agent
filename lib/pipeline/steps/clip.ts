@@ -11,8 +11,6 @@ export const clip: StepHandler = async (job, accumulated) => {
   const { buildSentencesFromTranscript } = requireScript("transcriptUtils.cjs");
   const { updateJob } = requireScript("db.cjs");
 
-  await updateJob(job.id, { status: "clipping" });
-
   const best = accumulated.bestCandidate as {
     id: string;
     start_seconds: number;
@@ -29,7 +27,7 @@ export const clip: StepHandler = async (job, accumulated) => {
   const sourcePath = await downloadYoutubeVideo(job.url);
 
   let start = Math.max(0, Number(best.start_seconds) || 0);
-  let rawEnd = Number(best.end_seconds) || start + MAX_CLIP_DURATION_SECONDS;
+  const rawEnd = Number(best.end_seconds) || start + MAX_CLIP_DURATION_SECONDS;
   let end = Math.min(rawEnd, start + MAX_CLIP_DURATION_SECONDS);
 
   ({ start, end } = tryOverrideWithKeywordWindow({
@@ -42,27 +40,23 @@ export const clip: StepHandler = async (job, accumulated) => {
 
   ({ start, end } = snapToTranscriptBounds(start, end, transcript, buildSentencesFromTranscript));
 
-  rawEnd = start + MAX_CLIP_DURATION_SECONDS;
-  end = Math.min(end, rawEnd);
+  end = Math.min(end, start + MAX_CLIP_DURATION_SECONDS);
 
   const clipDuration = Math.max(0, end - start);
   const clipPath = await trimVideoSegment(sourcePath, start, end);
 
   let clipSizeBytes: number | null = null;
   try {
-    const stats = fs.statSync(clipPath);
-    clipSizeBytes = typeof stats.size === "number" ? stats.size : null;
+    clipSizeBytes = fs.statSync(clipPath).size;
   } catch {
     clipSizeBytes = null;
   }
 
   const { storagePath, publicUrl } = await uploadClipToStorage(clipPath, job.id, best.title);
 
-  try {
-    if (fs.existsSync(sourcePath)) fs.unlinkSync(sourcePath);
-    if (fs.existsSync(clipPath)) fs.unlinkSync(clipPath);
-  } catch {
-    // Ignore cleanup errors
+  // Cleanup temp files
+  for (const p of [sourcePath, clipPath]) {
+    try { fs.unlinkSync(p); } catch { /* ignore */ }
   }
 
   await updateJob(job.id, { clip_storage_path: storagePath, clip_url: publicUrl });
@@ -127,6 +121,7 @@ function tryOverrideWithKeywordWindow({
     return { start, end };
   }
 
+  // Try quoted phrase matching first
   const quoted = extractQuotedPhrases(instruction);
   if (quoted.length > 0) {
     const phrase = quoted[0].toLowerCase();
@@ -167,6 +162,7 @@ function tryOverrideWithKeywordWindow({
     }
   }
 
+  // Fall back to content-word matching
   const allWords = String(instruction || "").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
   const STOPWORDS = new Set([
     "the", "and", "for", "with", "this", "that", "when", "where",

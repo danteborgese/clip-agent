@@ -1,6 +1,6 @@
 "use client";
 
-import { PIPELINE_STEPS } from "@/lib/pipeline-steps";
+import { PIPELINE_STEPS } from "@/lib/pipeline/steps-config";
 import type { PipelineStep, StepDetail } from "@/lib/pipeline/types";
 import { STEP_ORDER } from "@/lib/pipeline/types";
 import { StepItem } from "./StepItem";

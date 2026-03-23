@@ -72,10 +72,14 @@ describe("publish step", () => {
     expect(mockUpdateJob).toHaveBeenCalledWith("job-1", { notion_page_id: "notion-page-123" });
   });
 
-  it("sets status to 'notion' at start", async () => {
+  it("does not set status directly — orchestrator owns status transitions", async () => {
     await publish(makeJob(), defaultAccumulated);
 
-    expect(mockUpdateJob).toHaveBeenCalledWith("job-1", { status: "notion" });
+    // Only call should be notion_page_id update, not status
+    const statusCalls = mockUpdateJob.mock.calls.filter(
+      ([, patch]: [string, Record<string, unknown>]) => "status" in patch
+    );
+    expect(statusCalls).toHaveLength(0);
   });
 
   it("continues with empty tags if generateTags throws", async () => {
@@ -89,7 +93,7 @@ describe("publish step", () => {
     expect(notionCall.tags).toEqual([]);
   });
 
-  it("normalizes candidate scores — undefined becomes null", async () => {
+  it("passes candidates through to Notion without remapping", async () => {
     const accumulated: StepOutput = {
       ...defaultAccumulated,
       candidates: [
@@ -100,7 +104,7 @@ describe("publish step", () => {
     await publish(makeJob(), accumulated);
 
     const notionCall = mockCreateNotionPage.mock.calls[0][0];
-    expect(notionCall.candidates[0].score).toBeNull();
+    expect(notionCall.candidates[0].score).toBeUndefined();
   });
 
   it("handles null fileSize gracefully", async () => {

@@ -6,8 +6,6 @@ export const publish: StepHandler = async (job, accumulated) => {
   const { createNotionClipPage } = requireScript("notion.cjs");
   const { updateJob } = requireScript("db.cjs");
 
-  await updateJob(job.id, { status: "notion" });
-
   const metadata = accumulated.metadata as Record<string, unknown>;
   const candidates = accumulated.candidates as Array<{
     start_seconds: number;
@@ -25,21 +23,12 @@ export const publish: StepHandler = async (job, accumulated) => {
   const clipDuration = accumulated.clipDuration as number;
   const fileSize = accumulated.fileSize as number | null;
 
-  const notionCandidates = candidates.map((c) => ({
-    start_seconds: Number(c.start_seconds),
-    end_seconds: Number(c.end_seconds),
-    title: c.title,
-    description: c.description,
-    reason: c.reason,
-    score: typeof c.score === "number" ? c.score : null,
-  }));
-
   let tags: string[] = [];
   try {
     tags = await generateTags({
       instruction: job.instruction,
       metadata,
-      candidates: notionCandidates,
+      candidates,
     });
   } catch {
     tags = [];
@@ -51,7 +40,7 @@ export const publish: StepHandler = async (job, accumulated) => {
     sourceUrl: job.url,
     clipUrl,
     metadata,
-    candidates: notionCandidates,
+    candidates,
     tags,
     clipDurationSeconds: clipDuration,
     fileSizeBytes: fileSize,
