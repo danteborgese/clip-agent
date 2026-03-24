@@ -1,26 +1,48 @@
-import { VideoIcon } from "./VideoIcon";
-
 export function HeroPanel() {
   return (
-    <div className="dot-grid hidden md:flex w-1/2 relative overflow-hidden items-center justify-center bg-black">
-      <div className="relative z-10 px-12 max-w-sm animate-entrance delay-0">
-        <div className="w-10 h-10 border border-white/20 rounded-lg flex items-center justify-center mb-8">
-          <VideoIcon size={20} color="white" />
-        </div>
+    <div
+      className="hidden md:flex w-1/2 relative overflow-hidden items-center justify-center"
+      style={{
+        background: "#0A0A0A",
+        borderRight: "1px solid #2a2a2a",
+      }}
+    >
+      <div className="relative z-10 px-12 max-w-md animate-entrance delay-0">
         <p
-          className="text-xs uppercase tracking-[0.2em] text-white/40 mb-4"
-          style={{ fontFamily: "var(--font-mono)" }}
+          style={{
+            fontFamily: "'JetBrains Mono', monospace",
+            fontSize: "14px",
+            color: "#10B981",
+            marginBottom: "24px",
+          }}
         >
-          Clip Agent
+          &gt; clip_agent
         </p>
         <h1
-          className="text-3xl font-700 text-white tracking-tight leading-snug mb-5"
-          style={{ fontFamily: "var(--font-mono)" }}
+          style={{
+            fontFamily: "'JetBrains Mono', monospace",
+            fontSize: "42px",
+            fontWeight: 700,
+            color: "#FAFAFA",
+            lineHeight: 1.1,
+            marginBottom: "24px",
+          }}
         >
-          Clip the moments that matter.
+          clip the moments
+          <br />
+          that matter.
         </h1>
-        <p className="text-sm leading-relaxed text-white/40" style={{ fontFamily: "var(--font-sans)" }}>
-          Paste a YouTube link, describe the moment you want, and the agent will find and cut it.
+        <p
+          style={{
+            fontFamily: "'IBM Plex Mono', monospace",
+            fontSize: "14px",
+            color: "#6B7280",
+            lineHeight: 1.5,
+          }}
+        >
+          paste a youtube link, describe the moment
+          <br />
+          you want, and the agent will find and cut it.
         </p>
       </div>
     </div>

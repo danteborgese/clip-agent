@@ -1,7 +1,7 @@
 import type { StepHandler } from "../types";
 import { requireScript } from "../require-cjs";
 
-export const publish: StepHandler = async (job, accumulated) => {
+export const publish: StepHandler = async (job, accumulated, onSubstep) => {
   const { generateTags } = requireScript("llm.cjs");
   const { createNotionClipPage } = requireScript("notion.cjs");
   const { updateJob } = requireScript("db.cjs");
@@ -23,6 +23,7 @@ export const publish: StepHandler = async (job, accumulated) => {
   const clipDuration = accumulated.clipDuration as number;
   const fileSize = accumulated.fileSize as number | null;
 
+  await onSubstep?.("Generating tags...");
   let tags: string[] = [];
   try {
     tags = await generateTags({
@@ -34,6 +35,7 @@ export const publish: StepHandler = async (job, accumulated) => {
     tags = [];
   }
 
+  await onSubstep?.("Creating Notion page...");
   const notionPageId = await createNotionClipPage({
     title: bestCandidate.title,
     description: bestCandidate.description,

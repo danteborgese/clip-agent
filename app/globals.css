@@ -1,18 +1,24 @@
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=JetBrains+Mono:wght@400;500;700&display=swap');
 
 @import "tailwindcss";
 
 :root {
-  --black: #000000;
-  --bg: #FAFAFA;
-  --surface: #FFFFFF;
-  --border: #E5E5E5;
-  --border-strong: #222222;
-  --text: #000000;
-  --text-secondary: #666666;
-  --text-muted: #999999;
-  --font-mono: 'Space Mono', monospace;
-  --font-sans: 'Outfit', sans-serif;
+  --bg: #0A0A0A;
+  --surface: transparent;
+  --surface-elevated: #0F0F0F;
+  --surface-active: #1F1F1F;
+  --border: #2a2a2a;
+  --text: #FAFAFA;
+  --text-secondary: #6B7280;
+  --text-muted: #4B5563;
+  --accent: #10B981;
+  --error: #EF4444;
+  --error-bg: #1A0A0A;
+  --error-border: #3D1515;
+  --error-text: #9B4444;
+  --warning: #F59E0B;
+  --font-mono: 'JetBrains Mono', monospace;
+  --font-body: 'IBM Plex Mono', monospace;
 }
 
 * {
@@ -22,7 +28,7 @@
 }
 
 body {
-  font-family: var(--font-sans);
+  font-family: var(--font-body);
   line-height: 1.6;
   color: var(--text);
   background: var(--bg);
@@ -75,19 +81,13 @@ body {
   animation: drawCheck 0.3s ease-out forwards;
 }
 
-/* Dot grid pattern for hero panel */
-.dot-grid {
-  background-image: radial-gradient(rgba(255,255,255,0.08) 1px, transparent 1px);
-  background-size: 24px 24px;
-}
-
 /* Input focus */
 .input-field {
   transition: border-color 0.15s ease;
 }
 
 .input-field:focus-within {
-  border-color: var(--black);
+  border-color: var(--accent);
 }
 
 /* Button */
@@ -96,5 +96,17 @@ body {
 }
 
 .btn-primary:hover:not(:disabled) {
-  opacity: 0.8;
+  opacity: 0.85;
+}
+
+/* Placeholder text */
+::placeholder {
+  color: #4B5563;
+  opacity: 1;
+}
+
+/* Ensure selection color */
+::selection {
+  background: #10B981;
+  color: #0A0A0A;
 }

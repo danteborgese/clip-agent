@@ -20,6 +20,7 @@ const mocks: Record<string, Record<string, unknown>> = {
   "youtube.cjs": {
     fetchYoutubeMetadataAndTranscript: vi.fn().mockResolvedValue({ metadata: {}, transcript: [] }),
     getVideoId: vi.fn(),
+    parseIsoDuration: vi.fn().mockReturnValue(0),
   },
   "db.cjs": {
     getJobById: vi.fn().mockResolvedValue({}),
@@ -29,6 +30,14 @@ const mocks: Record<string, Record<string, unknown>> = {
   "llm.cjs": {
     generateCandidates: vi.fn().mockResolvedValue([]),
     generateTags: vi.fn().mockResolvedValue([]),
+    getEmbeddings: vi.fn().mockResolvedValue([]),
+    cosineSimilarity: vi.fn().mockReturnValue(0),
+    buildTranscriptEmbeddings: vi.fn().mockResolvedValue([]),
+    findSemanticMatch: vi.fn().mockResolvedValue(null),
+    segmentTranscriptWithLLM: vi.fn().mockResolvedValue([]),
+    computeConfidenceScore: vi.fn().mockReturnValue(null),
+    assessTranscriptQuality: vi.fn().mockReturnValue(0.8),
+    transcribeWithWhisper: vi.fn().mockResolvedValue([]),
   },
   "downloader.cjs": {
     downloadYoutubeVideo: vi.fn().mockResolvedValue("/tmp/source.mp4"),
@@ -44,6 +53,10 @@ const mocks: Record<string, Record<string, unknown>> = {
   },
   "supabaseClient.cjs": {
     supabase: {},
+  },
+  "ytUtils.cjs": {
+    getVideoId: vi.fn().mockReturnValue("test"),
+    isValidYoutubeUrl: vi.fn().mockReturnValue(true),
   },
   "supabaseStorage.cjs": {
     uploadClipToStorage: vi.fn().mockResolvedValue({ storagePath: "clips/mock.mp4", publicUrl: "https://storage.mock/clip.mp4" }),

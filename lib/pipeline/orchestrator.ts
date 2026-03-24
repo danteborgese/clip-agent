@@ -33,8 +33,14 @@ async function updateStepDetails(jobId: string, mutate: (details: StepDetail[]) 
   await db().updateJob(jobId, { step_details: details });
 }
 
+// Keys that are kept in-memory between steps but NOT persisted to the DB
+// (too large for JSONB column and cause statement timeouts)
+const TRANSIENT_KEYS = ["transcriptEmbeddings"];
+
 export async function runPipeline(jobId: string): Promise<void> {
   let job = await db().getJobById(jobId);
+  // In-memory store for large transient data that shouldn't hit the DB
+  const transient: Record<string, unknown> = {};
 
   // If job is pending, initialize it for the pipeline
   if (job.status === "pending") {
@@ -42,6 +48,18 @@ export async function runPipeline(jobId: string): Promise<void> {
   }
 
   while (job.step !== "done") {
+    // Check for cancellation before starting next step
+    job = await db().getJobById(jobId);
+    if (job.status === "cancelled") {
+      await updateStepDetails(jobId, (details) => {
+        const idx = details.findLastIndex((d) => d.status === "active");
+        if (idx >= 0) {
+          details[idx] = { ...details[idx], status: "failed", completedAt: now(), error: "Job cancelled" };
+        }
+      });
+      return;
+    }
+
     const handler = HANDLERS[job.step];
     if (!handler) {
       throw new Error(`No handler for step: ${job.step}`);
@@ -54,8 +72,14 @@ export async function runPipeline(jobId: string): Promise<void> {
     await db().updateJob(jobId, { step: job.step, status: STEP_STATUS[job.step] ?? job.step });
 
     try {
-      const accumulated: StepOutput = (job.step_output as StepOutput) ?? {};
-      const result = await handler(job, accumulated);
+      // Merge persisted step_output with in-memory transient data
+      const accumulated: StepOutput = { ...(job.step_output as StepOutput) ?? {}, ...transient };
+      const onSubstep = async (summary: string) => {
+        await updateStepDetails(jobId, (details) => {
+          details.push({ step: job.step, status: "active", startedAt: now(), summary });
+        });
+      };
+      const result = await handler(job, accumulated, onSubstep);
       const currentIdx = STEP_ORDER.indexOf(job.step);
       const nextStep = STEP_ORDER[currentIdx + 1] as PipelineStep;
 
@@ -66,9 +90,19 @@ export async function runPipeline(jobId: string): Promise<void> {
         }
       });
 
+      const mergedOutput: Record<string, unknown> = { ...(job.step_output as StepOutput) ?? {}, ...result.data };
+
+      // Separate transient keys: keep in memory, strip from DB payload
+      for (const key of TRANSIENT_KEYS) {
+        if (key in mergedOutput) {
+          transient[key] = mergedOutput[key];
+          delete mergedOutput[key];
+        }
+      }
+
       const patch: Record<string, unknown> = {
         step: nextStep,
-        step_output: { ...accumulated, ...result.data },
+        step_output: mergedOutput,
       };
       if (nextStep === "done") {
         patch.status = "done";
@@ -76,6 +110,18 @@ export async function runPipeline(jobId: string): Promise<void> {
 
       job = await db().updateJob(jobId, patch);
     } catch (err) {
+      // If job was cancelled while a step was running, exit gracefully
+      const latest = await db().getJobById(jobId);
+      if (latest.status === "cancelled") {
+        await updateStepDetails(jobId, (details) => {
+          const idx = details.findLastIndex((d) => d.step === job.step && d.status === "active");
+          if (idx >= 0) {
+            details[idx] = { ...details[idx], status: "failed", completedAt: now(), error: "Job cancelled" };
+          }
+        });
+        return;
+      }
+
       const message = err instanceof Error ? err.message : String(err);
       await updateStepDetails(jobId, (details) => {
         const idx = details.findLastIndex((d) => d.step === job.step && d.status === "active");

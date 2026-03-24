@@ -1,3 +1,5 @@
+const MAX_SEGMENTS_PER_SENTENCE = 20;
+
 function buildSentencesFromTranscript(transcript) {
   if (!Array.isArray(transcript) || transcript.length === 0) {
     return [];
@@ -5,6 +7,7 @@ function buildSentencesFromTranscript(transcript) {
 
   const sentences = [];
   let current = null;
+  let segmentCount = 0;
   const SENTENCE_END_RE = /[.!?]["')\]]*\s*$/;
 
   for (const seg of transcript) {
@@ -23,15 +26,21 @@ function buildSentencesFromTranscript(transcript) {
         end_seconds: end,
         text,
       };
+      segmentCount = 1;
     } else {
       current.end_seconds = end;
       current.text = current.text ? `${current.text} ${text}` : text;
+      segmentCount++;
     }
 
     const trimmed = text.trim();
-    if (trimmed && SENTENCE_END_RE.test(trimmed)) {
+    const isSentenceEnd = trimmed && SENTENCE_END_RE.test(trimmed);
+    const isTooLong = segmentCount >= MAX_SEGMENTS_PER_SENTENCE;
+
+    if (isSentenceEnd || isTooLong) {
       sentences.push(current);
       current = null;
+      segmentCount = 0;
     }
   }
 
@@ -49,4 +58,3 @@ function buildSentencesFromTranscript(transcript) {
 module.exports = {
   buildSentencesFromTranscript,
 };
-

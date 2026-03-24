@@ -4,12 +4,14 @@ import { requireScript } from "../require-cjs";
 
 const MAX_CLIP_DURATION_SECONDS = 12 * 60; // 12 minutes
 
-export const clip: StepHandler = async (job, accumulated) => {
+export const clip: StepHandler = async (job, accumulated, onSubstep) => {
   const { downloadYoutubeVideo } = requireScript("downloader.cjs");
   const { trimVideoSegment } = requireScript("ffmpeg.cjs");
   const { uploadClipToStorage } = requireScript("supabaseStorage.cjs");
   const { buildSentencesFromTranscript } = requireScript("transcriptUtils.cjs");
   const { updateJob } = requireScript("db.cjs");
+  const llm = requireScript("llm.cjs");
+  const findSemanticMatch = typeof llm.findSemanticMatch === "function" ? llm.findSemanticMatch : null;
 
   const best = accumulated.bestCandidate as {
     id: string;
@@ -23,26 +25,78 @@ export const clip: StepHandler = async (job, accumulated) => {
     end_seconds: number;
     text: string;
   }>;
+  const transcriptEmbeddings = accumulated.transcriptEmbeddings as Array<{
+    start_seconds: number;
+    end_seconds: number;
+    embedding: number[];
+  }> | null;
+  const confidence = accumulated.confidence as number | null;
 
-  const sourcePath = await downloadYoutubeVideo(job.url);
+  let sourcePath: string;
+  const isUpload = job.platform === "upload";
+
+  if (isUpload) {
+    // Direct upload — file is already local
+    await onSubstep?.("Using uploaded video file...");
+    sourcePath = job.url; // url field stores the local file path for uploads
+    if (!fs.existsSync(sourcePath)) {
+      throw new Error(`Uploaded video file not found: ${sourcePath}`);
+    }
+  } else {
+    // YouTube — download the video
+    await onSubstep?.("Downloading source video...");
+    const onProgress = onSubstep
+      ? (pct: number) => onSubstep(`Downloading source video... ${Math.round(pct)}%`)
+      : undefined;
+    sourcePath = await downloadYoutubeVideo(job.url, onProgress, job.id);
+  }
 
   let start = Math.max(0, Number(best.start_seconds) || 0);
   const rawEnd = Number(best.end_seconds) || start + MAX_CLIP_DURATION_SECONDS;
   let end = Math.min(rawEnd, start + MAX_CLIP_DURATION_SECONDS);
 
-  ({ start, end } = tryOverrideWithKeywordWindow({
-    start,
-    end,
-    transcript,
-    instruction: job.instruction,
-    buildSentencesFromTranscript,
-  }));
+  // Improvement #3: Try semantic matching first, fall back to keyword matching
+  let usedSemantic = false;
+  if (transcriptEmbeddings) {
+    try {
+      const match = await findSemanticMatch(job.instruction, transcriptEmbeddings);
+      if (match && match.similarity > 0.4) {
+        // Use semantic match to refine the window around the LLM-selected range
+        const semanticCenter = (match.start_seconds + match.end_seconds) / 2;
+        const llmCenter = (start + end) / 2;
+        const llmDuration = end - start;
+
+        // If semantic match is within reasonable range of LLM selection, use it to refine
+        if (Math.abs(semanticCenter - llmCenter) < llmDuration * 2) {
+          const refinedStart = Math.max(0, match.start_seconds - 15);
+          const refinedEnd = match.end_seconds + 20;
+          // Blend: keep LLM's broader range but anchor around semantic match
+          start = Math.min(start, refinedStart);
+          end = Math.max(end, Math.min(refinedEnd, start + MAX_CLIP_DURATION_SECONDS));
+          usedSemantic = true;
+        }
+      }
+    } catch {
+      // Fall through to keyword matching
+    }
+  }
+
+  if (!usedSemantic) {
+    ({ start, end } = tryOverrideWithKeywordWindow({
+      start,
+      end,
+      transcript,
+      instruction: job.instruction,
+      buildSentencesFromTranscript,
+    }));
+  }
 
   ({ start, end } = snapToTranscriptBounds(start, end, transcript, buildSentencesFromTranscript));
 
   end = Math.min(end, start + MAX_CLIP_DURATION_SECONDS);
 
   const clipDuration = Math.max(0, end - start);
+  await onSubstep?.(`Trimming ${clipDuration.toFixed(0)}s clip...`);
   const clipPath = await trimVideoSegment(sourcePath, start, end);
 
   let clipSizeBytes: number | null = null;
@@ -52,14 +106,56 @@ export const clip: StepHandler = async (job, accumulated) => {
     clipSizeBytes = null;
   }
 
+  // Improvement #8: Multi-modal clip verification
+  let visionScore: number | null = null;
+  try {
+    visionScore = await verifyClipWithVision(clipPath, job.instruction);
+    if (visionScore !== null) {
+      await onSubstep?.(`Vision verification score: ${visionScore}/5`);
+    }
+  } catch {
+    // Non-critical, continue without vision check
+  }
+
+  await onSubstep?.("Uploading clip to storage...");
   const { storagePath, publicUrl } = await uploadClipToStorage(clipPath, job.id, best.title);
 
-  // Cleanup temp files
+  // Cleanup temp files (always delete clip, delete source for uploads too)
   for (const p of [sourcePath, clipPath]) {
     try { fs.unlinkSync(p); } catch { /* ignore */ }
   }
 
-  await updateJob(job.id, { clip_storage_path: storagePath, clip_url: publicUrl });
+  // Extract transcript sentences that fall within the clip time range
+  const sentences = buildSentencesFromTranscript(transcript);
+  const clipTranscript = sentences
+    .filter((s: { start_seconds: number; end_seconds: number }) =>
+      s.start_seconds >= start && s.end_seconds <= end
+    )
+    .map((s: { start_seconds: number; end_seconds: number; text: string }) => ({
+      start_seconds: +(s.start_seconds - start).toFixed(1),
+      end_seconds: +(s.end_seconds - start).toFixed(1),
+      text: s.text,
+    }));
+
+  // Improvement #6: Check confidence + vision for needs_review status
+  const needsReview =
+    (confidence !== null && confidence < 0.6) ||
+    (visionScore !== null && visionScore <= 2);
+
+  if (needsReview) {
+    await updateJob(job.id, {
+      clip_storage_path: storagePath,
+      clip_url: publicUrl,
+      clip_transcript: clipTranscript,
+      status: "needs_review",
+    });
+  } else {
+    await updateJob(job.id, {
+      clip_storage_path: storagePath,
+      clip_url: publicUrl,
+      clip_transcript: clipTranscript,
+    });
+  }
 
   return {
     data: {
@@ -67,12 +163,101 @@ export const clip: StepHandler = async (job, accumulated) => {
       clipUrl: publicUrl,
       clipDuration,
       fileSize: clipSizeBytes,
+      visionScore,
+      needsReview,
+      usedSemanticMatching: usedSemantic,
     },
-    summary: `Clipped ${clipDuration.toFixed(0)}s, uploaded to storage`,
+    summary: `Clipped ${clipDuration.toFixed(0)}s, uploaded to storage${needsReview ? " (flagged for review)" : ""}`,
   };
 };
 
-// --- Helper functions ---
+// --- Multi-modal verification (Improvement #8) ---
+
+async function verifyClipWithVision(
+  clipPath: string,
+  instruction: string
+): Promise<number | null> {
+  const OpenAI = require("openai");
+  const { execSync } = require("child_process");
+  const path = require("path");
+
+  const client = process.env.OPENAI_API_KEY
+    ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+    : null;
+  if (!client) return null;
+
+  // Extract 3 keyframes
+  const framesDir = path.join(process.cwd(), "tmp", "frames");
+  if (!fs.existsSync(framesDir)) {
+    fs.mkdirSync(framesDir, { recursive: true });
+  }
+
+  const baseName = path.basename(clipPath, path.extname(clipPath));
+  try {
+    execSync(
+      `ffmpeg -i "${clipPath}" -vf "select=not(mod(n\\,90)),scale=480:-1" -frames:v 3 -q:v 5 "${framesDir}/${baseName}_%02d.jpg" -y 2>/dev/null`,
+      { stdio: "pipe" }
+    );
+  } catch {
+    return null;
+  }
+
+  const frameFiles = fs
+    .readdirSync(framesDir)
+    .filter((f: string) => f.startsWith(baseName) && f.endsWith(".jpg"))
+    .sort()
+    .slice(0, 3);
+
+  if (frameFiles.length === 0) return null;
+
+  const imageContent = frameFiles.map((f: string) => {
+    const data = fs.readFileSync(path.join(framesDir, f));
+    return {
+      type: "image_url" as const,
+      image_url: {
+        url: `data:image/jpeg;base64,${data.toString("base64")}`,
+      },
+    };
+  });
+
+  try {
+    const completion = await client.chat.completions.create({
+      model: "gpt-4.1",
+      max_tokens: 200,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You verify video clips match user instructions. Rate 1-5 how well the visual content matches. Return JSON: {\"score\": N, \"reason\": \"...\"}",
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "text" as const,
+              text: `Instruction: "${instruction}"\n\nDo these frames from the clip match the instruction?`,
+            },
+            ...imageContent,
+          ],
+        },
+      ],
+      response_format: { type: "json_object" },
+    });
+
+    const raw = completion.choices[0]?.message?.content || "{}";
+    const parsed = JSON.parse(raw);
+    return typeof parsed.score === "number" ? parsed.score : null;
+  } catch {
+    return null;
+  } finally {
+    // Cleanup frames
+    for (const f of frameFiles) {
+      try { fs.unlinkSync(path.join(framesDir, f)); } catch { /* ignore */ }
+    }
+  }
+}
+
+// --- Helper functions (keyword fallback) ---
 
 const NUMBER_WORDS: Record<string, string> = {
   zero: "0", one: "1", two: "2", three: "3", four: "4", five: "5",

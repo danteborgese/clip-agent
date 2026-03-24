@@ -21,7 +21,10 @@ export interface Job {
   selected_candidate_id: string | null;
   clip_storage_path: string | null;
   clip_url: string | null;
+  clip_transcript?: { start_seconds: number; end_seconds: number; text: string }[] | null;
   notion_page_id: string | null;
+  confidence?: number | null;
+  confidence_signals?: { name: string; value: number }[] | null;
   error: string | null;
   created_at: string;
   updated_at: string;
@@ -43,7 +46,10 @@ export interface StepResult {
   summary: string;
 }
 
+export type SubstepCallback = (summary: string) => Promise<void>;
+
 export type StepHandler = (
   job: Job,
-  accumulated: StepOutput
+  accumulated: StepOutput,
+  onSubstep?: SubstepCallback
 ) => Promise<StepResult>;

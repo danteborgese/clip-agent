@@ -8,54 +8,6 @@ const client = process.env.OPENAI_API_KEY
 
 const MAX_CLIP_DURATION_SECONDS = 12 * 60; // 12 minutes
 
-const STOPWORDS = new Set([
-  "the",
-  "and",
-  "for",
-  "with",
-  "this",
-  "that",
-  "when",
-  "where",
-  "what",
-  "about",
-  "clip",
-  "part",
-  "talks",
-  "talking",
-  "says",
-]);
-
-const NUMBER_WORDS = {
-  zero: "0",
-  one: "1",
-  two: "2",
-  three: "3",
-  four: "4",
-  five: "5",
-  six: "6",
-  seven: "7",
-  eight: "8",
-  nine: "9",
-  ten: "10",
-  eleven: "11",
-  twelve: "12",
-};
-
-const DIGIT_TO_WORD = Object.entries(NUMBER_WORDS).reduce((acc, [word, digit]) => {
-  acc[digit] = word;
-  return acc;
-}, {});
-
-const candidateSchema = z.object({
-  start_seconds: z.number().nonnegative(),
-  end_seconds: z.number().positive(),
-  title: z.string(),
-  description: z.string(),
-  reason: z.string(),
-  score: z.number().optional(),
-});
-
 const sentenceRangeCandidateSchema = z.object({
   start_sentence_index: z.number().int().nonnegative(),
   end_sentence_index: z.number().int().nonnegative(),
@@ -70,7 +22,18 @@ const sentenceRangeResponseSchema = z.object({
 });
 
 const responseSchema = z.object({
-  candidates: z.array(candidateSchema).max(10),
+  candidates: z
+    .array(
+      z.object({
+        start_seconds: z.number().nonnegative(),
+        end_seconds: z.number().positive(),
+        title: z.string(),
+        description: z.string(),
+        reason: z.string(),
+        score: z.number().optional(),
+      })
+    )
+    .max(10),
 });
 
 const tagsResponseSchema = z.object({
@@ -98,16 +61,25 @@ function applyDurationPreferenceToCandidates(candidates) {
     } else if (duration <= 150) {
       penalty = 0;
     } else if (duration <= 300) {
-      penalty = ((duration - 150) / 150) * 1.5; // up to ~1.5
+      penalty = ((duration - 150) / 150) * 1.5;
     } else if (duration <= 600) {
-      penalty = 2 + ((duration - 300) / 300) * 1; // 2–3
+      penalty = 2 + ((duration - 300) / 300) * 1;
     } else {
-      penalty = 4; // heavily down-rank near-12-minute chunks
+      penalty = 4;
     }
 
     const adjusted = Math.max(0, baseScore - penalty);
     return { ...c, score: adjusted };
   });
+}
+
+function formatSentencesForPrompt(sentences) {
+  return sentences
+    .map(
+      (s) =>
+        `[idx=${s.index}, ${s.start_seconds.toFixed(1)}-${s.end_seconds.toFixed(1)}] ${s.text}`
+    )
+    .join("\n");
 }
 
 async function generateCandidates({ transcript, instruction, metadata }) {
@@ -119,185 +91,42 @@ async function generateCandidates({ transcript, instruction, metadata }) {
     ? buildSentencesFromTranscript(transcript)
     : [];
 
-  const { keywords, keywordVariants } = extractInstructionKeywords(instruction);
-  const digitPhrases = extractDigitLeadingPhrases(instruction);
+  if (!sentences.length) {
+    throw new Error("No transcript sentences available for moment detection");
+  }
 
-  // Debug: see how the instruction is interpreted for candidate generation
   console.log("generateCandidates input:", {
     instruction,
-    keywords,
-    digitPhrases,
     sentenceCount: sentences.length,
     metadataTitle: metadata?.title,
     metadataChannel: metadata?.channel,
   });
 
-  let timeCandidates = [];
+  const transcriptText = formatSentencesForPrompt(sentences);
 
-  if (sentences.length && (keywords.length || digitPhrases.length)) {
-    let hitSentenceIndices = [];
+  const system = `You are a clip-finding assistant. You are given the full transcript of a video as numbered sentences.
+Find 1-5 clip candidates that best match the user's instruction.
+Each candidate should be a contiguous range of sentences that captures a complete thought or discussion.
+Rules:
+- STRONGLY prefer durations between 45 and 150 seconds. This is the ideal clip length.
+- Clips over 180 seconds should be rare and only used when the topic truly requires it.
+- Never exceed 720 seconds (12 minutes).
+- Start right before the specific topic begins and end shortly after it concludes. Be precise — don't include unrelated tangents before or after.
+- Focus on the SPECIFIC topic mentioned in the instruction, not the broader discussion around it.
+- Return the best matches, scored 1-10. Give higher scores to clips that are focused and concise.
+Return JSON: {"candidates": [{ "start_sentence_index": N, "end_sentence_index": N, "title": "...", "description": "...", "reason": "...", "score": N }]}`;
 
-    if (digitPhrases.length) {
-      const phraseHits = findPhraseHitSentenceIndices(sentences, digitPhrases);
-      if (phraseHits.length) {
-        hitSentenceIndices = phraseHits;
-      }
-    }
-
-    if (!hitSentenceIndices.length && keywords.length) {
-      hitSentenceIndices = findKeywordHitSentenceIndices(
-        sentences,
-        keywords,
-        keywordVariants
-      );
-    }
-
-    // Debug: which sentences were identified as hits
-    console.log("generateCandidates hits:", {
-      hitSentenceIndices,
-      hitCount: hitSentenceIndices.length,
-    });
-
-    if (hitSentenceIndices.length) {
-      const neighborhoods = buildNeighborhoods(sentences, hitSentenceIndices, {
-        preSentences: 8,
-        postSentences: 8,
-      });
-      const topNeighborhoods = selectTopNeighborhoods(neighborhoods, 4);
-
-      // Debug: how we grouped hits into neighborhoods
-      console.log("generateCandidates neighborhoods:", {
-        totalNeighborhoods: neighborhoods.length,
-        topNeighborhoods: topNeighborhoods.map((n) => ({
-          startIndex: n.startIndex,
-          endIndex: n.endIndex,
-          hitCount: n.hitCount,
-          durationSeconds: n.durationSeconds,
-        })),
-      });
-
-      let sentenceRangeCandidates = [];
-      for (const neighborhood of topNeighborhoods) {
-        // eslint-disable-next-line no-await-in-loop
-        const locals = await generateSentenceRangeCandidatesForNeighborhood({
-          sentences,
-          neighborhood,
-          instruction,
-          keywords,
-          keywordVariants,
-          metadata,
-        });
-        sentenceRangeCandidates.push(...locals);
-      }
-
-      const deduped = dedupeSentenceRangeCandidates(sentenceRangeCandidates);
-      const filtered = filterSentenceRangeCandidatesByKeywordHits(
-        deduped,
-        sentences,
-        keywords,
-        keywordVariants
-      );
-      const limited = limitSentenceRangeCandidates(filtered, 10);
-      timeCandidates = convertSentenceCandidatesToTimeCandidates(
-        limited,
-        sentences
-      );
-    }
-  }
-
-  if (!timeCandidates.length) {
-    return generateCandidatesFromTranscriptSimple({
-      transcript,
-      instruction,
-      metadata,
-    });
-  }
-
-  const scored = applyDurationPreferenceToCandidates(timeCandidates);
-  const validated = responseSchema.parse({ candidates: scored });
-  const out = validated.candidates || [];
-  if (out.length === 0) {
-    throw new Error(
-      "The AI found no matching moments. Try a clearer instruction or a different video."
-    );
-  }
-  return out;
-}
-
-async function generateCandidatesFromTranscriptSimple({ transcript, instruction, metadata }) {
-  if (!client) {
-    throw new Error("OPENAI_API_KEY is not set; cannot generate candidates");
-  }
-
-  const { keywords, keywordVariants } = extractInstructionKeywords(instruction);
-
-  // Debug: see how the instruction is interpreted in the simple fallback path
-  console.log("generateCandidatesFromTranscriptSimple input:", {
-    instruction,
-    keywords,
-    metadataTitle: metadata?.title,
-    metadataChannel: metadata?.channel,
-  });
-
-  // Build a 12-minute (720s) window around segments that contain instruction keywords.
-  const WINDOW_HALF_SECONDS = 6 * 60; // +/- 6 minutes around each hit
-  let focusedTranscript = transcript;
-
-  if (transcript && transcript.length && keywords.length) {
-    const hitCenters = transcript
-      .filter((s) => {
-        const lower = String(s.text || "").toLowerCase().replace(/-/g, "");
-        return keywords.some((k) => {
-          const vars = keywordVariants.get(k) || [k];
-          return vars.some((v) => lower.includes(v));
-        });
-      })
-      .map((s) => (s.start_seconds + s.end_seconds) / 2);
-
-    if (hitCenters.length > 0) {
-      const minCenter = Math.min(...hitCenters);
-      const maxCenter = Math.max(...hitCenters);
-      const windowStart = Math.max(0, minCenter - WINDOW_HALF_SECONDS);
-      const windowEnd = maxCenter + WINDOW_HALF_SECONDS;
-
-      focusedTranscript = transcript.filter(
-        (s) =>
-          s.end_seconds >= windowStart &&
-          s.start_seconds <= windowEnd
-      );
-    }
-  }
-
-  if (!focusedTranscript || focusedTranscript.length === 0) {
-    focusedTranscript = transcript;
-  }
-
-  const limitedTranscript = focusedTranscript.slice(0, 800);
-  const transcriptText = limitedTranscript
-    .map((s) => `[${s.start_seconds.toFixed(1)}-${s.end_seconds.toFixed(1)}] ${s.text}`)
-    .join("\n");
-
-  const system = `
-You are a clip-finding assistant for a creator brand. Themes: mental models, personal growth, systems, creator business.
-Your task: return 1–10 candidate clip moments from the transcript. Each candidate must have start_seconds, end_seconds (use timestamps from the transcript), title, description, reason, and score (1–10).
-Rules: Match the user's instruction when possible. If nothing matches well, return the 1–3 most interesting or on-theme moments from the transcript. You MUST return at least one candidate; never return an empty array.
-Output only valid JSON with a single key "candidates" (array of objects). No markdown, no extra keys, no commentary.
-Example: {"candidates":[{"start_seconds":120.5,"end_seconds":145.2,"title":"...","description":"...","reason":"...","score":8}]}
-`;
-
-  const user = `
-Instruction: ${instruction}
-Instruction keywords (focus on these when picking moments): ${keywords.join(", ") || "none"}
+  const user = `Instruction: ${instruction}
 Title: ${metadata?.title || "Untitled"}
 Channel: ${metadata?.channel || "Unknown"}
-Duration seconds: ${metadata?.durationSeconds || "unknown"}
+Duration: ${metadata?.durationSeconds || "unknown"} seconds
 
-Transcript segments:
-${transcriptText}
-`;
+Transcript:
+${transcriptText}`;
 
   const completion = await client.chat.completions.create({
     model: "gpt-4.1-mini",
+    temperature: 0,
     messages: [
       { role: "system", content: system },
       { role: "user", content: user },
@@ -307,6 +136,7 @@ ${transcriptText}
 
   let raw = completion.choices[0]?.message?.content || "{}";
   raw = raw.replace(/^```json\s*/i, "").replace(/\s*```$/i, "").trim();
+
   let parsed;
   try {
     parsed = JSON.parse(raw);
@@ -314,22 +144,226 @@ ${transcriptText}
     throw new Error("LLM returned invalid JSON for candidates");
   }
 
-  let candidates = [];
-  if (Array.isArray(parsed.candidates)) {
-    candidates = parsed.candidates;
-  } else if (Array.isArray(parsed)) {
-    candidates = parsed;
-  }
+  const validated = sentenceRangeResponseSchema.parse(
+    Array.isArray(parsed.candidates)
+      ? parsed
+      : { candidates: parsed.candidates || [] }
+  );
 
-  const scored = applyDurationPreferenceToCandidates(candidates);
-  const validated = responseSchema.parse({ candidates: scored });
-  const out = validated.candidates || [];
-  if (out.length === 0) {
+  const sentenceCandidates = validated.candidates || [];
+
+  if (!sentenceCandidates.length) {
     throw new Error(
       "The AI found no matching moments. Try a clearer instruction or a different video."
     );
   }
+
+  // Pass 2: Refine top 3 candidates in parallel with GPT-4.1
+  const sorted = [...sentenceCandidates].sort(
+    (a, b) => (b.score ?? 0) - (a.score ?? 0)
+  );
+  const topK = sorted.slice(0, 3);
+  let finalSentenceCandidates = sorted;
+
+  try {
+    const refinedResults = await Promise.all(
+      topK.map((candidate) =>
+        runPass2(client, candidate, sentences, instruction, metadata).catch(
+          (err) => {
+            console.warn(
+              `Pass 2 refinement failed for candidate idx ${candidate.start_sentence_index}:`,
+              err.message
+            );
+            return null;
+          }
+        )
+      )
+    );
+
+    const refinedCandidates = refinedResults.filter(Boolean);
+    if (refinedCandidates.length > 0) {
+      for (let i = 0; i < refinedCandidates.length; i++) {
+        const original = topK[i];
+        const refined = refinedResults[i];
+        if (refined) {
+          console.log(`Pass 2 refined #${i + 1}:`, {
+            before: `idx ${original.start_sentence_index}-${original.end_sentence_index}`,
+            after: `idx ${refined.start_sentence_index}-${refined.end_sentence_index}`,
+          });
+        }
+      }
+      // Merge refined candidates with remaining unrefined ones
+      const refinedSet = new Set(
+        refinedCandidates.map((r) => `${r.start_sentence_index}-${r.end_sentence_index}`)
+      );
+      const remaining = sorted.slice(topK.length).filter(
+        (c) => !refinedSet.has(`${c.start_sentence_index}-${c.end_sentence_index}`)
+      );
+      finalSentenceCandidates = [...refinedCandidates, ...remaining];
+    }
+  } catch (err) {
+    console.warn("Pass 2 refinement failed, using pass 1 results:", err.message);
+  }
+
+  const timeCandidates = convertSentenceCandidatesToTimeCandidates(
+    finalSentenceCandidates,
+    sentences
+  );
+
+  const scored = applyDurationPreferenceToCandidates(timeCandidates);
+  const out = responseSchema.parse({ candidates: scored }).candidates || [];
+
+  if (!out.length) {
+    throw new Error(
+      "The AI found no matching moments. Try a clearer instruction or a different video."
+    );
+  }
+
   return out;
+}
+
+async function runPass2(client, topCandidate, sentences, instruction, metadata) {
+  const BUFFER = 25;
+  const windowStart = Math.max(0, topCandidate.start_sentence_index - BUFFER);
+  const windowEnd = Math.min(
+    sentences.length - 1,
+    topCandidate.end_sentence_index + BUFFER
+  );
+
+  // Extract subset and re-index for clean 0..N indices
+  const subset = sentences.slice(windowStart, windowEnd + 1).map((s, i) => ({
+    ...s,
+    index: i,
+  }));
+
+  const subsetText = formatSentencesForPrompt(subset);
+
+  const system = `You are a clip boundary refinement assistant. You have been given a section of a video transcript that contains the topic of interest.
+Your job is to find the PRECISE start and end sentence indices for a tightly focused clip.
+Rules:
+- The clip MUST be between 45 and 150 seconds. Only exceed 150 seconds if the specific topic absolutely requires it.
+- Start at the EXACT moment the specific topic begins — not the general discussion leading up to it.
+- End right when the specific topic concludes — do not include tangential follow-up discussion.
+- Be aggressive about trimming. A shorter, focused clip is always better than a long, rambling one.
+- Return exactly 1 candidate.
+Return JSON: {"candidates": [{ "start_sentence_index": N, "end_sentence_index": N, "title": "...", "description": "...", "reason": "...", "score": N }]}`;
+
+  const user = `Instruction: ${instruction}
+Title: ${metadata?.title || "Untitled"}
+Channel: ${metadata?.channel || "Unknown"}
+
+Transcript section (${subset.length} sentences):
+${subsetText}`;
+
+  const system2 = system + `\nAlso include a "confidence" field (0.0-1.0) representing how confident you are that this clip precisely matches the instruction.
+Return JSON: {"candidates": [{ "start_sentence_index": N, "end_sentence_index": N, "title": "...", "description": "...", "reason": "...", "score": N, "confidence": 0.0-1.0 }]}`;
+
+  const completion = await client.chat.completions.create({
+    model: "gpt-4.1",
+    temperature: 0,
+    messages: [
+      { role: "system", content: system2 },
+      { role: "user", content: user },
+    ],
+    response_format: { type: "json_object" },
+  });
+
+  let raw = completion.choices[0]?.message?.content || "{}";
+  raw = raw.replace(/^```json\s*/i, "").replace(/\s*```$/i, "").trim();
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+
+  const validated = sentenceRangeResponseSchema.parse(
+    Array.isArray(parsed.candidates)
+      ? parsed
+      : { candidates: parsed.candidates || [] }
+  );
+
+  const refined = validated.candidates?.[0];
+  if (!refined) return null;
+
+  // Map local indices back to global
+  return {
+    ...refined,
+    confidence: parsed.candidates?.[0]?.confidence ?? null,
+    start_sentence_index: windowStart + refined.start_sentence_index,
+    end_sentence_index: windowStart + refined.end_sentence_index,
+  };
+}
+
+function convertSentenceCandidatesToTimeCandidates(candidates, sentences) {
+  const out = [];
+
+  for (const c of candidates) {
+    let startIndex = c.start_sentence_index;
+    let endIndex = c.end_sentence_index;
+
+    if (!Number.isInteger(startIndex) || !Number.isInteger(endIndex)) {
+      continue;
+    }
+
+    if (startIndex > endIndex) {
+      const tmp = startIndex;
+      startIndex = endIndex;
+      endIndex = tmp;
+    }
+
+    const startSentence = sentences[startIndex];
+    const endSentence = sentences[endIndex];
+    if (!startSentence || !endSentence) {
+      continue;
+    }
+
+    let startSeconds = Number(startSentence.start_seconds);
+    let endSeconds = Number(endSentence.end_seconds);
+    if (!Number.isFinite(startSeconds) || !Number.isFinite(endSeconds)) {
+      continue;
+    }
+
+    if (endSeconds <= startSeconds) {
+      continue;
+    }
+
+    if (endSeconds - startSeconds > MAX_CLIP_DURATION_SECONDS) {
+      endSeconds = startSeconds + MAX_CLIP_DURATION_SECONDS;
+    }
+
+    out.push({
+      start_seconds: startSeconds,
+      end_seconds: endSeconds,
+      title: c.title,
+      description: c.description,
+      reason: c.reason,
+      score: typeof c.score === "number" ? c.score : undefined,
+    });
+  }
+
+  return out;
+}
+
+// --- Tag generation (unchanged) ---
+
+const STOPWORDS = new Set([
+  "the", "and", "for", "with", "this", "that", "when",
+  "where", "what", "about", "clip", "part", "talks", "talking", "says",
+]);
+
+function extractInstructionKeywords(instruction) {
+  const allWords = String(instruction || "")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+
+  const keywords = Array.from(
+    new Set(allWords.filter((w) => w.length >= 4 && !STOPWORDS.has(w)))
+  ).slice(0, 8);
+
+  return { keywords };
 }
 
 async function generateTags({ instruction, metadata, candidates }) {
@@ -418,383 +452,395 @@ Output ONLY valid JSON of the shape: {"tags":["tag1","tag2",...]} with unique st
   return tags;
 }
 
-function extractInstructionKeywords(instruction) {
-  const allWords = String(instruction || "")
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter(Boolean);
+// --- Embedding-based semantic similarity ---
 
-  const keywords = Array.from(
-    new Set(allWords.filter((w) => w.length >= 4 && !STOPWORDS.has(w)))
-  ).slice(0, 8);
-
-  const keywordVariants = new Map();
-  for (const k of keywords) {
-    keywordVariants.set(k, buildKeywordVariants(k));
+async function getEmbeddings(texts) {
+  if (!client) {
+    throw new Error("OPENAI_API_KEY is not set; cannot compute embeddings");
   }
-
-  return { keywords, keywordVariants };
-}
-
-function buildKeywordVariants(k) {
-  const variants = new Set();
-  const base = k.replace(/-/g, "");
-  variants.add(k);
-  variants.add(base);
-
-  const numberDigit = NUMBER_WORDS[base];
-  if (numberDigit) {
-    variants.add(numberDigit);
-  }
-
-  if (base.endsWith("s")) {
-    variants.add(base.slice(0, -1));
-  } else {
-    variants.add(base + "s");
-  }
-  if (base.endsWith("es")) {
-    variants.add(base.slice(0, -2));
-  }
-
-   // Simple stemming to group related forms like "creative", "creativity",
-   // "creatives", "creator" under a shared root.
-  let stem = base.replace(
-    /(ing|ers|er|ies|ied|ness|ment|ments|ation|ations|ality|alities|ity|ities|able|ables|ful|fulness|less|lessly)$/i,
-    ""
-  );
-  if (stem.length >= 4) {
-    variants.add(stem);
-  }
-
-  return Array.from(variants).filter(Boolean);
-}
-
-function findKeywordHitSentenceIndices(sentences, keywords, keywordVariants) {
-  const hits = new Set();
-
-  for (const sentence of sentences) {
-    const lower = String(sentence.text || "").toLowerCase().replace(/-/g, "");
-
-    for (const k of keywords) {
-      const vars = keywordVariants.get(k) || [k];
-      if (vars.some((v) => lower.includes(v))) {
-        hits.add(sentence.index);
-        break;
-      }
-    }
-  }
-
-  return Array.from(hits).sort((a, b) => a - b);
-}
-
-function buildNeighborhoods(sentences, hitIndices, options) {
-  const preSentences = options?.preSentences ?? 8;
-  const postSentences = options?.postSentences ?? 8;
-
-  if (!hitIndices.length || !sentences.length) return [];
-
-  const n = sentences.length;
-  const rawRanges = hitIndices.map((idx) => ({
-    startIndex: Math.max(0, idx - preSentences),
-    endIndex: Math.min(n - 1, idx + postSentences),
-  }));
-
-  rawRanges.sort((a, b) => a.startIndex - b.startIndex);
-
-  const merged = [];
-  for (const range of rawRanges) {
-    const last = merged[merged.length - 1];
-    if (!last || range.startIndex > last.endIndex + 1) {
-      merged.push({ ...range });
-    } else {
-      last.endIndex = Math.max(last.endIndex, range.endIndex);
-    }
-  }
-
-  return merged.map((range) => {
-    const first = sentences[range.startIndex];
-    const last = sentences[range.endIndex];
-    const hitsInRange = hitIndices.filter(
-      (i) => i >= range.startIndex && i <= range.endIndex
-    );
-    const durationSeconds =
-      Number(last?.end_seconds || 0) - Number(first?.start_seconds || 0);
-
-    return {
-      ...range,
-      hitCount: hitsInRange.length,
-      durationSeconds,
-    };
+  const response = await client.embeddings.create({
+    model: "text-embedding-3-small",
+    input: texts,
   });
+  return response.data.map((d) => d.embedding);
 }
 
-function selectTopNeighborhoods(neighborhoods, maxCount) {
-  const sorted = [...neighborhoods].sort((a, b) => {
-    if (b.hitCount !== a.hitCount) {
-      return b.hitCount - a.hitCount;
-    }
-    return a.durationSeconds - b.durationSeconds;
-  });
-  return sorted.slice(0, maxCount);
-}
-
-async function generateSentenceRangeCandidatesForNeighborhood({
-  sentences,
-  neighborhood,
-  instruction,
-  keywords,
-  keywordVariants,
-  metadata,
-}) {
-  const { startIndex, endIndex } = neighborhood;
-  const subset = sentences.slice(startIndex, endIndex + 1);
-  if (!subset.length) return [];
-
-  // Debug: show a sample of full sentences in this neighborhood
-  console.log("generateSentenceRange neighborhood sample:", {
-    startIndex,
-    endIndex,
-    sample: subset.slice(0, 5).map((s) => ({
-      index: s.index,
-      start_seconds: s.start_seconds,
-      end_seconds: s.end_seconds,
-      text: s.text,
-    })),
-  });
-
-  const transcriptText = subset
-    .map((s) => {
-      const lower = String(s.text || "").toLowerCase().replace(/-/g, "");
-      const isHit = keywords.some((k) => {
-        const vars = keywordVariants.get(k) || [k];
-        return vars.some((v) => lower.includes(v));
-      });
-      const hitTag = isHit ? " [HIT]" : "";
-      return `[sent_idx=${s.index}, ${s.start_seconds.toFixed(
-        1
-      )}-${s.end_seconds.toFixed(1)}]${hitTag} ${s.text}`;
-    })
-    .join("\n");
-
-  const system = `
-You are a clip-finding assistant for a creator brand. Themes: mental models, personal growth, systems, creator business.
-You are given a contiguous block of transcript sentences from a long-form video.
-Select 0–3 of the best clip candidates from this neighborhood that:
-- Focus on the key ideas from the user's instruction and keywords.
-- Include at least one mention of any instruction keyword (including simple variants).
-- Emphasize segments where the concept is defined, explained, or illustrated with concrete examples, not just mentioned in passing.
-- Are contiguous ranges of whole sentences (no mid-sentence cuts).
-- Prefer durations between 45 and 150 seconds, and never exceed 720 seconds (12 minutes).
-- Prefer clips where most of the sentences are marked [HIT] and whose center timestamp is close to the densest cluster of [HIT] sentences in this neighborhood, rather than long stretches of non-HIT context.
-Return JSON with a single key "candidates" whose value is an array of objects.
-Each candidate must include: start_sentence_index, end_sentence_index, title, description, reason, and score (1–10, where higher is better).
-Use the GLOBAL sentence indices shown as sent_idx=... when filling start_sentence_index and end_sentence_index.
-If nothing in this neighborhood makes for a good clip, return {"candidates": []}.
-`;
-
-  const user = `
-Instruction: ${instruction}
-Instruction keywords (focus on these when picking moments): ${keywords.join(", ") || "none"}
-Title: ${metadata?.title || "Untitled"}
-Channel: ${metadata?.channel || "Unknown"}
-Duration seconds: ${metadata?.durationSeconds || "unknown"}
-
-Transcript sentences (global indices):
-${transcriptText}
-`;
-
-  const completion = await client.chat.completions.create({
-    model: "gpt-4.1-mini",
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: user },
-    ],
-    response_format: { type: "json_object" },
-  });
-
-  let raw = completion.choices[0]?.message?.content || "{}";
-  raw = raw.replace(/^```json\s*/i, "").replace(/\s*```$/i, "").trim();
-
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    throw new Error("LLM returned invalid JSON for neighborhood candidates");
+function cosineSimilarity(a, b) {
+  let dot = 0;
+  let magA = 0;
+  let magB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    magA += a[i] * a[i];
+    magB += b[i] * b[i];
   }
-
-  const validated = sentenceRangeResponseSchema.parse(
-    Array.isArray(parsed.candidates) ? parsed : { candidates: parsed.candidates || [] }
-  );
-
-  return validated.candidates || [];
+  const denom = Math.sqrt(magA) * Math.sqrt(magB);
+  return denom === 0 ? 0 : dot / denom;
 }
 
-function dedupeSentenceRangeCandidates(candidates) {
-  const seen = new Set();
-  const out = [];
+/**
+ * Build sliding window embeddings over transcript sentences.
+ * Returns array of { windowStart, windowEnd, start_seconds, end_seconds, embedding }
+ */
+async function buildTranscriptEmbeddings(sentences, windowSize = 4) {
+  if (!sentences.length) return [];
 
-  for (const c of candidates) {
-    const start = c.start_sentence_index;
-    const end = c.end_sentence_index;
-    const key = `${start}-${end}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(c);
-  }
-
-  return out;
-}
-
-function filterSentenceRangeCandidatesByKeywordHits(
-  candidates,
-  sentences,
-  keywords,
-  keywordVariants
-) {
-  if (!Array.isArray(candidates) || !candidates.length) return [];
-  if (!Array.isArray(sentences) || !sentences.length) return candidates;
-  if (!keywords.length) return candidates;
-
-  return candidates.filter((c) => {
-    const startIndex = Math.max(0, Number(c.start_sentence_index) || 0);
-    const endIndex = Math.min(
-      sentences.length - 1,
-      Number(c.end_sentence_index) || startIndex
-    );
-    for (let i = startIndex; i <= endIndex; i++) {
-      const sentence = sentences[i];
-      const lower = String(sentence.text || "").toLowerCase().replace(/-/g, "");
-      for (const k of keywords) {
-        const vars = keywordVariants.get(k) || [k];
-        if (vars.some((v) => lower.includes(v))) {
-          return true;
-        }
-      }
-    }
-    return false;
-  });
-}
-
-function extractDigitLeadingPhrases(instruction) {
-  const text = String(instruction || "").toLowerCase();
-  const phrases = new Set();
-  const regex = /\b(\d+\s+[a-z]{3,}(?:\s+[a-z]{3,}){0,3})\b/g;
-  let match;
-  while ((match = regex.exec(text)) !== null) {
-    const phrase = match[1].trim().replace(/\s+/g, " ");
-    if (phrase.length >= 5) {
-      phrases.add(phrase);
-    }
-  }
-  return Array.from(phrases);
-}
-
-function findPhraseHitSentenceIndices(sentences, phrases) {
-  if (!Array.isArray(sentences) || !sentences.length) return [];
-  if (!Array.isArray(phrases) || !phrases.length) return [];
-
-  const indices = new Set();
-
-  const phraseVariants = [];
-  for (const p of phrases) {
-    const base = p.toLowerCase().replace(/\s+/g, " ").trim();
-    if (!base) continue;
-
-    const parts = base.split(" ");
-    const first = parts[0];
-    const rest = parts.slice(1).join(" ");
-
-    phraseVariants.push(base);
-
-    if (DIGIT_TO_WORD[first]) {
-      phraseVariants.push(`${DIGIT_TO_WORD[first]} ${rest}`.trim());
-    }
-  }
-
-  const normalizedVariants = phraseVariants
-    .map((v) => v.replace(/-/g, " ").replace(/\s+/g, " ").trim())
-    .filter(Boolean);
-
-  for (const sentence of sentences) {
-    const idx = sentence.index;
-    const lower = String(sentence.text || "").toLowerCase();
-    const normalized = lower.replace(/-/g, " ").replace(/\s+/g, " ");
-
-    for (const pv of normalizedVariants) {
-      if (normalized.includes(pv)) {
-        indices.add(idx);
-        break;
-      }
-    }
-  }
-
-  return Array.from(indices).sort((a, b) => a - b);
-}
-
-function limitSentenceRangeCandidates(candidates, maxCount) {
-  const sorted = [...candidates].sort((a, b) => {
-    const scoreA = typeof a.score === "number" ? a.score : 0;
-    const scoreB = typeof b.score === "number" ? b.score : 0;
-    return scoreB - scoreA;
-  });
-  return sorted.slice(0, maxCount);
-}
-
-function convertSentenceCandidatesToTimeCandidates(candidates, sentences) {
-  const out = [];
-
-  for (const c of candidates) {
-    let startIndex = c.start_sentence_index;
-    let endIndex = c.end_sentence_index;
-
-    if (!Number.isInteger(startIndex) || !Number.isInteger(endIndex)) {
-      // eslint-disable-next-line no-continue
-      continue;
-    }
-
-    if (startIndex > endIndex) {
-      const tmp = startIndex;
-      startIndex = endIndex;
-      endIndex = tmp;
-    }
-
-    const startSentence = sentences[startIndex];
-    const endSentence = sentences[endIndex];
-    if (!startSentence || !endSentence) {
-      // eslint-disable-next-line no-continue
-      continue;
-    }
-
-    let startSeconds = Number(startSentence.start_seconds);
-    let endSeconds = Number(endSentence.end_seconds);
-    if (!Number.isFinite(startSeconds) || !Number.isFinite(endSeconds)) {
-      // eslint-disable-next-line no-continue
-      continue;
-    }
-
-    if (endSeconds <= startSeconds) {
-      // eslint-disable-next-line no-continue
-      continue;
-    }
-
-    if (endSeconds - startSeconds > MAX_CLIP_DURATION_SECONDS) {
-      endSeconds = startSeconds + MAX_CLIP_DURATION_SECONDS;
-    }
-
-    out.push({
-      start_seconds: startSeconds,
-      end_seconds: endSeconds,
-      title: c.title,
-      description: c.description,
-      reason: c.reason,
-      score: typeof c.score === "number" ? c.score : undefined,
+  const windows = [];
+  for (let i = 0; i <= sentences.length - 1; i++) {
+    const end = Math.min(i + windowSize, sentences.length);
+    const windowSentences = sentences.slice(i, end);
+    const text = windowSentences.map((s) => s.text).join(" ");
+    windows.push({
+      windowStart: i,
+      windowEnd: end - 1,
+      start_seconds: windowSentences[0].start_seconds,
+      end_seconds: windowSentences[windowSentences.length - 1].end_seconds,
+      text,
     });
   }
 
-  return out;
+  // Batch embed in groups of 100
+  const allEmbeddings = [];
+  const BATCH_SIZE = 100;
+  for (let i = 0; i < windows.length; i += BATCH_SIZE) {
+    const batch = windows.slice(i, i + BATCH_SIZE);
+    const embeddings = await getEmbeddings(batch.map((w) => w.text));
+    allEmbeddings.push(...embeddings);
+  }
+
+  return windows.map((w, i) => ({
+    windowStart: w.windowStart,
+    windowEnd: w.windowEnd,
+    start_seconds: w.start_seconds,
+    end_seconds: w.end_seconds,
+    embedding: allEmbeddings[i],
+  }));
+}
+
+/**
+ * Find the transcript window most semantically similar to the instruction.
+ * Returns { start_seconds, end_seconds, similarity } or null.
+ */
+async function findSemanticMatch(instruction, transcriptEmbeddings) {
+  if (!transcriptEmbeddings.length) return null;
+
+  const [instructionEmbedding] = await getEmbeddings([instruction]);
+
+  let best = null;
+  let bestSim = -1;
+
+  for (const window of transcriptEmbeddings) {
+    const sim = cosineSimilarity(instructionEmbedding, window.embedding);
+    if (sim > bestSim) {
+      bestSim = sim;
+      best = window;
+    }
+  }
+
+  if (!best) return null;
+
+  return {
+    start_seconds: best.start_seconds,
+    end_seconds: best.end_seconds,
+    similarity: bestSim,
+    windowStart: best.windowStart,
+    windowEnd: best.windowEnd,
+  };
+}
+
+// --- LLM-based transcript segmentation (Improvement #5) ---
+
+async function segmentTranscriptWithLLM(rawTranscript) {
+  if (!client) {
+    throw new Error("OPENAI_API_KEY is not set; cannot segment transcript");
+  }
+
+  if (!Array.isArray(rawTranscript) || rawTranscript.length === 0) {
+    return rawTranscript;
+  }
+
+  // Build raw text with timestamp markers for re-alignment
+  const markedText = rawTranscript
+    .map((seg, i) => `<seg_${i}>${seg.text}`)
+    .join(" ");
+
+  // Process in chunks to stay within token limits
+  const CHUNK_SIZE = 200; // segments per chunk
+  const allSegmented = [];
+
+  for (let i = 0; i < rawTranscript.length; i += CHUNK_SIZE) {
+    const chunkSegments = rawTranscript.slice(i, i + CHUNK_SIZE);
+    const chunkText = chunkSegments.map((s) => s.text).join(" ");
+
+    const system = `You are a transcript segmentation assistant. Split the following spoken transcript into complete, grammatically correct sentences. The transcript may lack punctuation or have incorrect punctuation.
+Rules:
+- Each output sentence should be a complete thought
+- Preserve all original words exactly — do not add, remove, or change any words
+- Add appropriate punctuation (periods, question marks, exclamation marks)
+- Return JSON: {"sentences": ["sentence1", "sentence2", ...]}`;
+
+    const completion = await client.chat.completions.create({
+      model: "gpt-4.1-mini",
+      temperature: 0,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: chunkText },
+      ],
+      response_format: { type: "json_object" },
+    });
+
+    let raw = completion.choices[0]?.message?.content || "{}";
+    raw = raw.replace(/^```json\s*/i, "").replace(/\s*```$/i, "").trim();
+
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed.sentences)) {
+        allSegmented.push(
+          ...parsed.sentences.map((text) => ({ text, chunkOffset: i }))
+        );
+      }
+    } catch {
+      // Fallback: keep original segments for this chunk
+      for (const seg of chunkSegments) {
+        allSegmented.push({ text: seg.text, chunkOffset: i });
+      }
+    }
+  }
+
+  // Re-align segmented sentences to timestamps using fuzzy text matching
+  return alignSegmentedToTimestamps(allSegmented, rawTranscript);
+}
+
+function alignSegmentedToTimestamps(segmented, rawTranscript) {
+  const result = [];
+  let rawIdx = 0;
+  let rawCharPos = 0;
+  const rawTexts = rawTranscript.map((s) => (s.text || "").toLowerCase().trim());
+  const rawJoined = rawTexts.join(" ");
+
+  for (let i = 0; i < segmented.length; i++) {
+    const sentText = (segmented[i].text || "").toLowerCase().trim();
+    if (!sentText) continue;
+
+    // Find where this sentence starts in the raw joined text
+    const searchFrom = rawCharPos;
+    const foundPos = rawJoined.indexOf(sentText.slice(0, 20), searchFrom);
+    const startPos = foundPos >= 0 ? foundPos : rawCharPos;
+
+    // Find end position
+    const endPos = startPos + sentText.length;
+
+    // Map character positions back to raw segment indices
+    let charCount = 0;
+    let startSegIdx = 0;
+    let endSegIdx = 0;
+
+    for (let j = 0; j < rawTexts.length; j++) {
+      const segLen = rawTexts[j].length + 1; // +1 for join space
+      if (charCount + segLen > startPos && startSegIdx === 0 && j > 0) {
+        startSegIdx = j;
+      } else if (charCount <= startPos) {
+        startSegIdx = j;
+      }
+      if (charCount + segLen >= endPos) {
+        endSegIdx = j;
+        break;
+      }
+      charCount += segLen;
+    }
+
+    if (endSegIdx < startSegIdx) endSegIdx = startSegIdx;
+    if (endSegIdx >= rawTranscript.length) endSegIdx = rawTranscript.length - 1;
+
+    result.push({
+      index: i,
+      start_seconds: rawTranscript[startSegIdx].start_seconds,
+      end_seconds: rawTranscript[endSegIdx].end_seconds,
+      text: segmented[i].text,
+    });
+
+    rawCharPos = endPos;
+  }
+
+  return result;
+}
+
+// --- Confidence scoring (Improvement #6) ---
+
+function computeConfidenceScore({
+  candidates,
+  bestCandidate,
+  semanticSimilarity,
+  transcriptQuality,
+}) {
+  const signals = [];
+
+  // Signal 1: Score gap between #1 and #2 candidate (higher gap = more confident)
+  if (candidates && candidates.length >= 2) {
+    const sorted = [...candidates].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+    const gap = (sorted[0].score ?? 0) - (sorted[1].score ?? 0);
+    const gapSignal = Math.min(gap / 5, 1); // Normalize: 5-point gap = max confidence
+    signals.push({ name: "score_gap", value: gapSignal, weight: 0.2 });
+  }
+
+  // Signal 2: LLM self-reported confidence from Pass 2
+  if (bestCandidate?.confidence != null) {
+    signals.push({
+      name: "llm_confidence",
+      value: Number(bestCandidate.confidence) || 0,
+      weight: 0.3,
+    });
+  }
+
+  // Signal 3: Semantic similarity between instruction and clip content
+  if (semanticSimilarity != null) {
+    signals.push({
+      name: "semantic_similarity",
+      value: Math.max(0, Math.min(1, semanticSimilarity)),
+      weight: 0.3,
+    });
+  }
+
+  // Signal 4: Transcript quality (segment density, average length)
+  if (transcriptQuality != null) {
+    signals.push({
+      name: "transcript_quality",
+      value: Math.max(0, Math.min(1, transcriptQuality)),
+      weight: 0.2,
+    });
+  }
+
+  if (signals.length === 0) return null;
+
+  // Weighted average, redistributing weight from missing signals
+  const totalWeight = signals.reduce((sum, s) => sum + s.weight, 0);
+  const score = signals.reduce(
+    (sum, s) => sum + (s.value * s.weight) / totalWeight,
+    0
+  );
+
+  return {
+    score: Math.round(score * 100) / 100,
+    signals: signals.map((s) => ({
+      name: s.name,
+      value: Math.round(s.value * 100) / 100,
+    })),
+  };
+}
+
+/**
+ * Assess transcript quality based on segment statistics.
+ * Returns 0.0-1.0.
+ */
+function assessTranscriptQuality(transcript) {
+  if (!Array.isArray(transcript) || transcript.length === 0) return 0;
+
+  const texts = transcript.map((s) => (s.text || "").trim()).filter(Boolean);
+  if (texts.length === 0) return 0;
+
+  const avgLen = texts.reduce((sum, t) => sum + t.length, 0) / texts.length;
+  const hasPunctuation =
+    texts.filter((t) => /[.!?]/.test(t)).length / texts.length;
+
+  // More segments = generally better coverage
+  const densityScore = Math.min(texts.length / 100, 1);
+  // Average length 20-80 chars is ideal
+  const lengthScore = avgLen < 5 ? 0.2 : avgLen < 20 ? 0.5 : avgLen <= 80 ? 1 : 0.7;
+  // Punctuation presence suggests manual/better captions
+  const punctScore = hasPunctuation;
+
+  return densityScore * 0.3 + lengthScore * 0.3 + punctScore * 0.4;
+}
+
+// --- Whisper transcription (Improvement #7) ---
+
+async function transcribeWithWhisper(audioPath) {
+  if (!client) {
+    throw new Error("OPENAI_API_KEY is not set; cannot transcribe with Whisper");
+  }
+
+  const fs = require("fs");
+  const fileSize = fs.statSync(audioPath).size;
+  const MAX_WHISPER_SIZE = 25 * 1024 * 1024; // 25MB
+
+  if (fileSize > MAX_WHISPER_SIZE) {
+    // Split and transcribe in chunks
+    return await transcribeChunked(audioPath);
+  }
+
+  const response = await client.audio.transcriptions.create({
+    file: fs.createReadStream(audioPath),
+    model: "whisper-1",
+    response_format: "verbose_json",
+    timestamp_granularities: ["segment"],
+  });
+
+  return (response.segments || []).map((seg) => ({
+    start_seconds: seg.start,
+    end_seconds: seg.end,
+    text: seg.text.trim(),
+  }));
+}
+
+async function transcribeChunked(audioPath) {
+  const { execSync } = require("child_process");
+  const path = require("path");
+  const fs = require("fs");
+
+  const outDir = path.join(process.cwd(), "tmp", "whisper-chunks");
+  if (!fs.existsSync(outDir)) {
+    fs.mkdirSync(outDir, { recursive: true });
+  }
+
+  // Split into 10-minute chunks
+  const chunkDuration = 600;
+  execSync(
+    `ffmpeg -i "${audioPath}" -f segment -segment_time ${chunkDuration} -c copy "${outDir}/chunk_%03d.mp3" -y 2>/dev/null`,
+    { stdio: "pipe" }
+  );
+
+  const chunks = fs
+    .readdirSync(outDir)
+    .filter((f) => f.startsWith("chunk_") && f.endsWith(".mp3"))
+    .sort();
+
+  const allSegments = [];
+  let timeOffset = 0;
+
+  for (const chunkFile of chunks) {
+    const chunkPath = path.join(outDir, chunkFile);
+    const response = await client.audio.transcriptions.create({
+      file: fs.createReadStream(chunkPath),
+      model: "whisper-1",
+      response_format: "verbose_json",
+      timestamp_granularities: ["segment"],
+    });
+
+    for (const seg of response.segments || []) {
+      allSegments.push({
+        start_seconds: seg.start + timeOffset,
+        end_seconds: seg.end + timeOffset,
+        text: seg.text.trim(),
+      });
+    }
+
+    timeOffset += chunkDuration;
+    try { fs.unlinkSync(chunkPath); } catch { /* ignore */ }
+  }
+
+  try { fs.rmdirSync(outDir); } catch { /* ignore */ }
+  return allSegments;
 }
 
 module.exports = {
   generateCandidates,
   generateTags,
+  getEmbeddings,
+  cosineSimilarity,
+  buildTranscriptEmbeddings,
+  findSemanticMatch,
+  segmentTranscriptWithLLM,
+  computeConfidenceScore,
+  assessTranscriptQuality,
+  transcribeWithWhisper,
 };
