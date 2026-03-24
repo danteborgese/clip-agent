@@ -8,7 +8,7 @@ export async function POST(req: NextRequest) {
     const url = String(body.url || "");
     const instruction = String(body.instruction || "");
 
-    const result = await createClipJob({ url, instruction });
+    const result = await createClipJob({ inputMode: "url", url, instruction });
 
     if (!result.ok) {
       return NextResponse.json({ error: result.error }, { status: result.status });
