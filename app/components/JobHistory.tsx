@@ -12,12 +12,9 @@ export function JobHistory({ onSelectJob, activeJobId }: JobHistoryProps) {
 
   if (jobs.length === 0) {
     return (
-      <div className="px-4 py-8 text-center">
-        <p
-          className="text-xs text-[var(--text-muted)]"
-          style={{ fontFamily: "var(--font-mono)" }}
-        >
-          No jobs yet.
+      <div className="text-center" style={{ padding: "32px 16px" }}>
+        <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "12px", color: "#6B7280" }}>
+          no jobs yet.
         </p>
       </div>
     );
@@ -31,28 +28,48 @@ export function JobHistory({ onSelectJob, activeJobId }: JobHistoryProps) {
           <button
             key={job.id}
             onClick={() => onSelectJob(job.id)}
-            className="w-full text-left px-4 py-3 transition-colors duration-100 hover:bg-[#F5F5F5]"
+            className="w-full text-left transition-colors duration-100"
             style={{
-              background: isSelected ? "#F5F5F5" : "transparent",
+              padding: "16px 20px",
+              background: isSelected ? "#1F1F1F" : "transparent",
+              borderBottom: "1px solid #2a2a2a",
+              borderLeft: isSelected ? "2px solid #10B981" : "2px solid transparent",
             }}
+            onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.background = "#1F1F1F"; }}
+            onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.background = "transparent"; }}
           >
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0 flex-1">
                 <p
-                  className="text-sm font-medium text-black truncate"
-                  style={{ fontFamily: "var(--font-sans)" }}
+                  className="truncate"
+                  style={{
+                    fontFamily: "'JetBrains Mono', monospace",
+                    fontSize: "13px",
+                    fontWeight: 500,
+                    color: "#FAFAFA",
+                  }}
                 >
                   {(job.metadata as { title?: string })?.title ??
                     job.instruction.slice(0, 60) + (job.instruction.length > 60 ? "..." : "")}
                 </p>
                 <p
-                  className="text-[11px] text-[var(--text-muted)] mt-0.5 truncate"
-                  style={{ fontFamily: "var(--font-sans)" }}
+                  className="truncate"
+                  style={{
+                    fontFamily: "'IBM Plex Mono', monospace",
+                    fontSize: "11px",
+                    color: "#4B5563",
+                    marginTop: "4px",
+                  }}
                 >
                   {new Date(job.created_at).toLocaleDateString()} · {job.instruction.slice(0, 60)}
                 </p>
               </div>
-              <StatusBadge status={job.status} />
+              <div className="flex items-center gap-2 shrink-0">
+                {job.confidence != null && (
+                  <ConfidencePill confidence={job.confidence} />
+                )}
+                <StatusBadge status={job.status} />
+              </div>
             </div>
           </button>
         );
@@ -62,24 +79,51 @@ export function JobHistory({ onSelectJob, activeJobId }: JobHistoryProps) {
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const styles: Record<string, { bg: string; color: string; border: string }> = {
-    done: { bg: "#f0f0f0", color: "#000", border: "#ddd" },
-    failed: { bg: "#fee", color: "#900", border: "#ecc" },
-    pending: { bg: "transparent", color: "#999", border: "#e5e5e5" },
+  const colors: Record<string, string> = {
+    done: "#10B981",
+    failed: "#EF4444",
+    pending: "#6B7280",
+    cancelled: "#6B7280",
+    needs_review: "#F59E0B",
   };
-  const s = styles[status] ?? { bg: "transparent", color: "#666", border: "#ddd" };
+  const borders: Record<string, string> = {
+    failed: "#3D1515",
+    needs_review: "#3D3515",
+  };
+  const color = colors[status] ?? "#6B7280";
+  const borderColor = borders[status] ?? "#2a2a2a";
 
   return (
     <span
-      className="text-[10px] font-medium px-1.5 py-0.5 rounded shrink-0"
       style={{
-        fontFamily: "var(--font-mono)",
-        background: s.bg,
-        color: s.color,
-        border: `1px solid ${s.border}`,
+        fontFamily: "'JetBrains Mono', monospace",
+        fontSize: "11px",
+        color,
+        border: `1px solid ${borderColor}`,
+        padding: "2px 8px",
+        background: "transparent",
       }}
     >
-      {status}
+      [{status === "needs_review" ? "review" : status}]
+    </span>
+  );
+}
+
+function ConfidencePill({ confidence }: { confidence: number }) {
+  const pct = Math.round(confidence * 100);
+  const color =
+    confidence >= 0.7 ? "#10B981" : confidence >= 0.4 ? "#F59E0B" : "#EF4444";
+
+  return (
+    <span
+      style={{
+        fontFamily: "'JetBrains Mono', monospace",
+        fontSize: "10px",
+        color,
+        opacity: 0.8,
+      }}
+    >
+      {pct}%
     </span>
   );
 }

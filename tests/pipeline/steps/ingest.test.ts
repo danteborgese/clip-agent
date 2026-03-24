@@ -5,6 +5,9 @@ import { ingest } from "@/lib/pipeline/steps/ingest";
 
 const mockFetchYoutube = cjsMocks["youtube.cjs"].fetchYoutubeMetadataAndTranscript;
 const mockUpdateJob = cjsMocks["db.cjs"].updateJob;
+const mockBuildTranscriptEmbeddings = cjsMocks["llm.cjs"].buildTranscriptEmbeddings;
+const mockAssessTranscriptQuality = cjsMocks["llm.cjs"].assessTranscriptQuality;
+const mockBuildSentences = cjsMocks["transcriptUtils.cjs"].buildSentencesFromTranscript;
 
 function makeJob(overrides: Partial<Job> = {}): Job {
   return {
@@ -32,6 +35,9 @@ describe("ingest step", () => {
   beforeEach(() => {
     mockFetchYoutube.mockReset();
     mockUpdateJob.mockReset().mockResolvedValue({});
+    mockBuildTranscriptEmbeddings.mockReset().mockResolvedValue([]);
+    mockAssessTranscriptQuality.mockReset().mockReturnValue(0.8);
+    mockBuildSentences.mockReset().mockReturnValue([]);
   });
 
   it("returns metadata and transcript on success", async () => {
@@ -110,5 +116,44 @@ describe("ingest step", () => {
 
     const result = await ingest(makeJob(), {} as StepOutput);
     expect(result.summary).toContain("0 transcript segments");
+  });
+
+  it("includes transcriptSource and transcriptQuality in output", async () => {
+    mockFetchYoutube.mockResolvedValue({
+      metadata: { title: "Test", durationSeconds: 120 },
+      transcript: [{ start_seconds: 0, end_seconds: 5, text: "Hello." }],
+    });
+    mockAssessTranscriptQuality.mockReturnValue(0.9);
+
+    const result = await ingest(makeJob(), {} as StepOutput);
+
+    expect(result.data.transcriptSource).toBe("youtube");
+    expect(result.data.transcriptQuality).toBe(0.9);
+  });
+
+  it("attempts to build embeddings when available", async () => {
+    const mockEmbeddings = [{ windowStart: 0, windowEnd: 1, start_seconds: 0, end_seconds: 5, embedding: [0.1] }];
+    mockBuildTranscriptEmbeddings.mockResolvedValue(mockEmbeddings);
+    mockFetchYoutube.mockResolvedValue({
+      metadata: { title: "Test", durationSeconds: 120 },
+      transcript: [{ start_seconds: 0, end_seconds: 5, text: "Hello." }],
+    });
+
+    const result = await ingest(makeJob(), {} as StepOutput);
+
+    expect(result.data.transcriptEmbeddings).toEqual(mockEmbeddings);
+  });
+
+  it("gracefully handles embedding failure", async () => {
+    mockBuildTranscriptEmbeddings.mockRejectedValue(new Error("API error"));
+    mockFetchYoutube.mockResolvedValue({
+      metadata: { title: "Test", durationSeconds: 120 },
+      transcript: [{ start_seconds: 0, end_seconds: 5, text: "Hello." }],
+    });
+
+    const result = await ingest(makeJob(), {} as StepOutput);
+
+    expect(result.data.transcriptEmbeddings).toBeNull();
+    // Should not throw
   });
 });

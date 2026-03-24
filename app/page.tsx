@@ -9,43 +9,61 @@ import { JobTracker } from "@/app/components/JobTracker";
 
 export default function Home() {
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [retryInputs, setRetryInputs] = useState<{ url: string; instruction: string } | null>(null);
 
   return (
-    <div className="flex min-h-screen w-full">
+    <div className="flex min-h-screen w-full" style={{ background: "#0A0A0A" }}>
       <HeroPanel />
 
-      <div className="w-full md:w-1/2 flex flex-col items-center justify-center px-6 py-12 sm:px-12">
+      <div className="w-full md:w-1/2 flex flex-col items-center justify-center" style={{ padding: "48px 60px" }}>
         <div className="w-full max-w-lg">
-          {/* Card container */}
-          <div className="animate-entrance delay-0 rounded-xl border border-[var(--border)] bg-white p-8 sm:p-10">
+          <div className="animate-entrance delay-0">
             <FormHeader />
 
             {!activeJobId && (
-              <SubmitForm onJobCreated={setActiveJobId} />
+              <SubmitForm
+                key={retryInputs ? `retry-${Date.now()}` : "fresh"}
+                onJobCreated={(id) => {
+                  setRetryInputs(null);
+                  setActiveJobId(id);
+                }}
+                defaultUrl={retryInputs?.url}
+                defaultInstruction={retryInputs?.instruction}
+              />
             )}
 
             {activeJobId && (
               <div className="animate-entrance delay-0">
                 <JobTracker
                   jobId={activeJobId}
-                  onNewClip={() => setActiveJobId(null)}
+                  onNewClip={() => {
+                    setRetryInputs(null);
+                    setActiveJobId(null);
+                  }}
+                  onRetry={(url, instruction) => {
+                    setRetryInputs({ url, instruction });
+                    setActiveJobId(null);
+                  }}
                 />
               </div>
             )}
           </div>
 
-          {/* Nav to past jobs — outside the card */}
-          <div className="mt-5 px-1">
+          {/* Nav to past jobs */}
+          <div style={{ marginTop: "20px" }}>
             <Link
               href="/jobs"
-              className="inline-flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-black transition-colors"
-              style={{ fontFamily: "var(--font-mono)" }}
+              className="inline-flex items-center transition-colors"
+              style={{
+                fontFamily: "'JetBrains Mono', monospace",
+                fontSize: "12px",
+                color: "#6B7280",
+                textDecoration: "none",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = "#10B981"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = "#6B7280"; }}
             >
-              View past jobs
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M5 12h14" />
-                <path d="m12 5 7 7-7 7" />
-              </svg>
+              view_past_jobs &gt;&gt;
             </Link>
           </div>
         </div>

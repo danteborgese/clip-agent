@@ -36,7 +36,7 @@ export function useJobSubscription(jobId: string | null): JobSubscriptionState {
 
   const updateJob = useCallback(
     (newJob: Job) => {
-      isTerminalRef.current = newJob.status === "done" || newJob.status === "failed";
+      isTerminalRef.current = newJob.status === "done" || newJob.status === "failed" || newJob.status === "cancelled" || newJob.status === "needs_review";
       setState((prev) =>
         prev.id === jobId ? { ...prev, job: newJob, error: null, loading: false } : prev
       );

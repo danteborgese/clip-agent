@@ -8,92 +8,129 @@ interface StepItemProps {
   status: StepStatus;
   summary?: string;
   error?: string;
+  substeps?: string[];
   isLast?: boolean;
 }
 
-export function StepItem({ label, description, status, summary, error, isLast }: StepItemProps) {
+export function StepItem({ label, description, status, summary, error, substeps, isLast }: StepItemProps) {
   return (
-    <div className="flex gap-3">
-      {/* Connector + icon */}
-      <div className="flex flex-col items-center">
-        <div
-          className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 transition-all duration-300"
-          style={iconStyle(status)}
-        >
-          {status === "completed" && (
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <polyline className="check-draw" points="20 6 9 17 4 12" />
-            </svg>
-          )}
-          {status === "active" && (
-            <svg className="step-spinner" width="16" height="16" viewBox="0 0 16 16" fill="none">
-              <circle cx="8" cy="8" r="6" stroke="#DDD" strokeWidth="2" />
-              <path
-                d="M8 2a6 6 0 0 1 6 6"
-                stroke="#000"
-                strokeWidth="2"
-                strokeLinecap="round"
-              />
-            </svg>
-          )}
-          {status === "failed" && (
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          )}
-          {status === "upcoming" && (
-            <div className="w-1.5 h-1.5 rounded-full bg-[#CCC]" />
-          )}
-        </div>
+    <div className="flex" style={{ gap: "16px" }}>
+      {/* Connector */}
+      <div style={{ width: "16px", flexShrink: 0, position: "relative", alignSelf: "stretch" }}>
+        {/* Vertical line — full height of the row */}
         {!isLast && (
           <div
-            className="w-px flex-1 min-h-[20px] transition-all duration-300"
             style={{
-              background: status === "completed" ? "#000" : status === "failed" ? "#C00" : "#E5E5E5",
+              position: "absolute",
+              top: 0,
+              bottom: 0,
+              left: "50%",
+              width: "2px",
+              transform: "translateX(-50%)",
+              background: lineColor(status),
+              transition: "all 0.3s",
+            }}
+          />
+        )}
+        {/* Dot — sits on top of the line */}
+        {status === "active" ? (
+          <div
+            className="animate-spin"
+            style={{
+              position: "relative",
+              zIndex: 1,
+              width: "12px",
+              height: "12px",
+              margin: "3px auto 0",
+              borderRadius: "50%",
+              border: "2px solid #292524",
+              borderTopColor: "#F59E0B",
+            }}
+          />
+        ) : (
+          <div
+            style={{
+              position: "relative",
+              zIndex: 1,
+              width: "10px",
+              height: "10px",
+              borderRadius: "50%",
+              margin: "4px auto 0",
+              background: dotColor(status),
+              transition: "all 0.3s",
             }}
           />
         )}
       </div>
 
       {/* Content */}
-      <div className="pb-4 pt-1 min-w-0">
+      <div style={{ paddingBottom: "16px", minWidth: 0 }}>
         <p
-          className="text-xs font-medium transition-colors duration-300"
           style={{
-            fontFamily: "var(--font-mono)",
-            color:
-              status === "active" ? "#000"
-              : status === "completed" ? "#000"
-              : status === "failed" ? "#900"
-              : "#BBB",
+            fontFamily: "'JetBrains Mono', monospace",
+            fontSize: "13px",
+            fontWeight: 500,
+            color: labelColor(status),
+            transition: "color 0.3s",
           }}
         >
           {label}
         </p>
         <p
-          className="text-[11px] mt-0.5"
           style={{
-            fontFamily: "var(--font-sans)",
-            color: status === "upcoming" ? "#CCC" : "#999",
+            fontFamily: "'IBM Plex Mono', monospace",
+            fontSize: "12px",
+            color: "#6B7280",
+            marginTop: "4px",
           }}
         >
           {status === "failed" && error ? error : summary ?? description}
         </p>
+        {substeps && substeps.length > 0 && (
+          <div style={{ marginTop: "6px", display: "flex", flexDirection: "column", gap: "3px" }}>
+            {substeps.map((text, i) => (
+              <p
+                key={i}
+                style={{
+                  fontFamily: "'IBM Plex Mono', monospace",
+                  fontSize: "11px",
+                  color: i === substeps.length - 1 ? "#F59E0B" : "#4B5563",
+                  paddingLeft: "8px",
+                  borderLeft: "1px solid #2a2a2a",
+                }}
+              >
+                {text}
+              </p>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-function iconStyle(status: StepStatus): React.CSSProperties {
+function dotColor(status: StepStatus): string {
   switch (status) {
-    case "completed":
-      return { background: "#000", color: "#FFF" };
-    case "active":
-      return { background: "#FFF", border: "none" };
-    case "failed":
-      return { background: "#FEE", color: "#900", border: "1px solid #ECC" };
-    case "upcoming":
-      return { background: "#F5F5F5", color: "#CCC", border: "1px solid #E5E5E5" };
+    case "completed": return "#10B981";
+    case "active": return "#F59E0B";
+    case "failed": return "#EF4444";
+    case "upcoming": return "#6B7280";
+  }
+}
+
+function lineColor(status: StepStatus): string {
+  switch (status) {
+    case "completed": return "#10B981";
+    case "failed": return "#EF4444";
+    default: return "#2a2a2a";
+  }
+}
+
+function labelColor(status: StepStatus): string {
+  switch (status) {
+    case "completed": return "#10B981";
+    case "active": return "#F59E0B";
+    case "failed": return "#EF4444";
+    case "upcoming": return "#6B7280";
   }
 }

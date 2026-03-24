@@ -11,6 +11,7 @@ interface JobSummary {
   step: string;
   created_at: string;
   metadata: { title?: string } | null;
+  confidence: number | null;
 }
 
 export function useJobHistory(limit = 10) {
@@ -19,7 +20,7 @@ export function useJobHistory(limit = 10) {
   useEffect(() => {
     supabase
       .from("jobs")
-      .select("id, url, instruction, status, step, created_at, metadata")
+      .select("id, url, instruction, status, step, created_at, metadata, confidence")
       .order("created_at", { ascending: false })
       .limit(limit)
       .then(({ data }) => {
@@ -30,7 +31,7 @@ export function useJobHistory(limit = 10) {
   const refresh = () => {
     supabase
       .from("jobs")
-      .select("id, url, instruction, status, step, created_at, metadata")
+      .select("id, url, instruction, status, step, created_at, metadata, confidence")
       .order("created_at", { ascending: false })
       .limit(limit)
       .then(({ data }) => {

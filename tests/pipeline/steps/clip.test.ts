@@ -7,16 +7,23 @@ const mockTrim = cjsMocks["ffmpeg.cjs"].trimVideoSegment;
 const mockUploadStorage = cjsMocks["supabaseStorage.cjs"].uploadClipToStorage;
 const mockBuildSentences = cjsMocks["transcriptUtils.cjs"].buildSentencesFromTranscript;
 const mockUpdateJob = cjsMocks["db.cjs"].updateJob;
+const mockFindSemanticMatch = cjsMocks["llm.cjs"].findSemanticMatch;
 
 // Mock fs so we don't touch real filesystem
 vi.mock("fs", () => ({
   statSync: () => ({ size: 1024000 }),
   existsSync: () => false,
   unlinkSync: vi.fn(),
+  mkdirSync: vi.fn(),
+  readdirSync: () => [],
+  readFileSync: () => Buffer.from(""),
   default: {
     statSync: () => ({ size: 1024000 }),
     existsSync: () => false,
     unlinkSync: vi.fn(),
+    mkdirSync: vi.fn(),
+    readdirSync: () => [],
+    readFileSync: () => Buffer.from(""),
   },
 }));
 
@@ -64,12 +71,13 @@ describe("clip step", () => {
       { start_seconds: 30, end_seconds: 60, text: "This is the main content" },
     ]);
     mockUpdateJob.mockReset().mockResolvedValue({});
+    mockFindSemanticMatch.mockReset().mockResolvedValue(null);
   });
 
   it("downloads video, trims, and uploads", async () => {
     const result = await clip(makeJob(), defaultAccumulated);
 
-    expect(mockDownload).toHaveBeenCalledWith("https://youtube.com/watch?v=test");
+    expect(mockDownload.mock.calls[0][0]).toBe("https://youtube.com/watch?v=test");
     expect(mockTrim).toHaveBeenCalled();
     expect(result.data.clipDuration).toBeGreaterThan(0);
     expect(result.data.fileSize).toBe(1024000);

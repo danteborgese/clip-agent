@@ -14,17 +14,24 @@
     "run-job": "npx tsx scripts/run-job.ts",
     "run-pending": "npx tsx scripts/run-pending.ts",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "capture-fixture": "npx tsx scripts/capture-fixture.ts",
+    "test:accuracy": "vitest run tests/accuracy/"
   },
   "dependencies": {
     "@notionhq/client": "^2.2.15",
     "@supabase/supabase-js": "^2.49.1",
+    "@tabler/icons-react": "^3.40.0",
+    "clsx": "^2.1.1",
     "dotenv": "^16.4.5",
     "fluent-ffmpeg": "^2.1.3",
+    "motion": "^12.38.0",
     "next": "16.2.1",
     "openai": "^4.77.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",
+    "react-dropzone": "^15.0.0",
+    "tailwind-merge": "^3.5.0",
     "youtube-transcript": "^1.2.1",
     "zod": "^3.24.1"
   },
