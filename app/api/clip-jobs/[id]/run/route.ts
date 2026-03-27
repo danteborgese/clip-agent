@@ -21,11 +21,13 @@ export async function POST(
   const { id } = result.data;
 
   try {
+    console.log(`[API /api/clip-jobs/${id}/run] starting pipeline`);
     await runPipeline(id);
+    console.log(`[API /api/clip-jobs/${id}/run] pipeline completed`);
     return NextResponse.json({ ok: true, jobId: id, status: "done" });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`Pipeline failed for job ${id}:`, message);
+    console.error(`[API /api/clip-jobs/${id}/run] pipeline FAILED:`, message);
     return NextResponse.json({ ok: false, jobId: id, error: message }, { status: 500 });
   }
 }

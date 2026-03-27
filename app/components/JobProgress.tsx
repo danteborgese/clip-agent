@@ -24,6 +24,7 @@ function getProgress(currentStep: PipelineStep, status: string): number {
 }
 
 export function JobProgress({ currentStep, status, stepDetails }: JobProgressProps) {
+  console.log("[JobProgress] render", { currentStep, status, stepDetailsCount: stepDetails.length, stepDetails });
   const currentIdx = STEP_ORDER.indexOf(currentStep);
   const progress = getProgress(currentStep, status);
   const isDone = status === "done" || status === "needs_review" || currentStep === "done";

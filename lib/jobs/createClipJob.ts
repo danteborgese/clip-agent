@@ -1,5 +1,4 @@
 import { parseYoutubeVideoId } from "@/lib/youtube/parseVideoId";
-import { runPipeline } from "@/lib/pipeline/orchestrator";
 import { requireScript } from "@/lib/pipeline/require-cjs";
 
 export type CreateClipJobInput =
@@ -72,27 +71,6 @@ export async function createClipJob(input: CreateClipJobInput): Promise<CreateCl
 
   const jobId = data.id as string;
   console.log("Job created", { jobId, url, instruction });
-
-  // Fire-and-forget: run pipeline in background
-  try {
-    runPipeline(jobId).catch(async (err) => {
-      console.error(`Pipeline failed for job ${jobId}:`, err);
-      try {
-        await supabase
-          .from("jobs")
-          .update({
-            status: "failed",
-            error: err instanceof Error ? err.message : String(err),
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", jobId);
-      } catch {
-        // Last resort — ignore DB errors during failure recording
-      }
-    });
-  } catch (err) {
-    console.error(`Pipeline launch failed for job ${jobId}:`, err);
-  }
 
   return { ok: true, jobId };
 }

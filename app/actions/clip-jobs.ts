@@ -15,6 +15,7 @@ export async function createClipJobAction(
 ): Promise<ClipJobFormState> {
   const inputMode = String(formData.get("input_mode") ?? "url");
   const instruction = String(formData.get("instruction") ?? "");
+  console.log("[createClipJobAction] called", { inputMode, instruction: instruction.slice(0, 80) });
 
   if (inputMode === "upload") {
     const file = formData.get("video_file") as File | null;
@@ -31,6 +32,7 @@ export async function createClipJobAction(
     const buffer = Buffer.from(await file.arrayBuffer());
     await writeFile(filePath, buffer);
 
+    console.log("[createClipJobAction] upload mode — saved file to", filePath, "size:", file.size);
     const result = await createClipJob({
       instruction,
       inputMode: "upload",
@@ -38,6 +40,7 @@ export async function createClipJobAction(
       videoFileName: file.name,
     });
 
+    console.log("[createClipJobAction] createClipJob result:", result);
     if (!result.ok) {
       return { status: "error", message: result.error };
     }
@@ -46,8 +49,10 @@ export async function createClipJobAction(
 
   // URL mode (YouTube)
   const url = String(formData.get("url") ?? "");
+  console.log("[createClipJobAction] url mode —", url);
   const result = await createClipJob({ url, instruction, inputMode: "url" });
 
+  console.log("[createClipJobAction] createClipJob result:", result);
   if (!result.ok) {
     return { status: "error", message: result.error };
   }

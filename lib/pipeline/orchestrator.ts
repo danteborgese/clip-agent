@@ -38,12 +38,15 @@ async function updateStepDetails(jobId: string, mutate: (details: StepDetail[]) 
 const TRANSIENT_KEYS = ["transcriptEmbeddings"];
 
 export async function runPipeline(jobId: string): Promise<void> {
+  console.log(`[orchestrator] runPipeline started for job ${jobId}`);
   let job = await db().getJobById(jobId);
+  console.log(`[orchestrator] job loaded`, { id: job.id, status: job.status, step: job.step });
   // In-memory store for large transient data that shouldn't hit the DB
   const transient: Record<string, unknown> = {};
 
   // If job is pending, initialize it for the pipeline
   if (job.status === "pending") {
+    console.log(`[orchestrator] job is pending, initializing to ingest`);
     job = await db().updateJob(jobId, { step: "ingest", status: "ingesting" });
   }
 
@@ -64,6 +67,7 @@ export async function runPipeline(jobId: string): Promise<void> {
     if (!handler) {
       throw new Error(`No handler for step: ${job.step}`);
     }
+    console.log(`[orchestrator] starting step: ${job.step}`);
 
     // Set status + append active detail in one write
     await updateStepDetails(jobId, (details) => {
@@ -79,9 +83,12 @@ export async function runPipeline(jobId: string): Promise<void> {
           details.push({ step: job.step, status: "active", startedAt: now(), summary });
         });
       };
+      const stepStart = Date.now();
       const result = await handler(job, accumulated, onSubstep);
+      console.log(`[orchestrator] step "${job.step}" completed in ${((Date.now() - stepStart) / 1000).toFixed(1)}s`, { summary: result.summary, dataKeys: Object.keys(result.data ?? {}) });
       const currentIdx = STEP_ORDER.indexOf(job.step);
       const nextStep = STEP_ORDER[currentIdx + 1] as PipelineStep;
+      console.log(`[orchestrator] advancing to next step: ${nextStep}`);
 
       await updateStepDetails(jobId, (details) => {
         const idx = details.findLastIndex((d) => d.step === job.step && d.status === "active");
@@ -123,6 +130,7 @@ export async function runPipeline(jobId: string): Promise<void> {
       }
 
       const message = err instanceof Error ? err.message : String(err);
+      console.error(`[orchestrator] step "${job.step}" FAILED:`, message);
       await updateStepDetails(jobId, (details) => {
         const idx = details.findLastIndex((d) => d.step === job.step && d.status === "active");
         if (idx >= 0) {

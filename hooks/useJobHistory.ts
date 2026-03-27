@@ -18,12 +18,14 @@ export function useJobHistory(limit = 10) {
   const [jobs, setJobs] = useState<JobSummary[]>([]);
 
   useEffect(() => {
+    console.log("[useJobHistory] fetching jobs, limit:", limit);
     supabase
       .from("jobs")
       .select("id, url, instruction, status, step, created_at, metadata, confidence")
       .order("created_at", { ascending: false })
       .limit(limit)
       .then(({ data }) => {
+        console.log("[useJobHistory] fetched", data?.length ?? 0, "jobs");
         if (data) setJobs(data as JobSummary[]);
       });
   }, [limit]);
