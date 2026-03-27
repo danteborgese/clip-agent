@@ -1,10 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  outputFileTracingIncludes: {
-    "/api/**/*": ["./scripts/lib/**/*"],
-  },
-  serverExternalPackages: [
+serverExternalPackages: [
     "fluent-ffmpeg",
     "@notionhq/client",
     "openai",
