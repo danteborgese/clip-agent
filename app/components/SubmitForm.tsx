@@ -22,12 +22,16 @@ export function SubmitForm({ onJobCreated, defaultUrl, defaultInstruction }: Sub
 
   const [state, formAction, isPending] = useActionState(
     async (prev: ClipJobFormState, formData: FormData) => {
+      console.log("[SubmitForm] formAction called", { inputMode, hasFile: !!uploadedFile, prev });
       if (inputMode === "upload" && uploadedFile) {
         formData.set("video_file", uploadedFile);
       }
       formData.set("input_mode", inputMode);
+      console.log("[SubmitForm] calling createClipJobAction...");
       const result = await createClipJobAction(prev, formData);
+      console.log("[SubmitForm] createClipJobAction result:", result);
       if (result.status === "success") {
+        console.log("[SubmitForm] job created, notifying parent:", result.jobId);
         onJobCreated(result.jobId);
       }
       return result;
@@ -39,6 +43,7 @@ export function SubmitForm({ onJobCreated, defaultUrl, defaultInstruction }: Sub
   const errorMessage = state.status === "error" ? state.message : "";
 
   const handleFileUpload = (files: File[]) => {
+    console.log("[SubmitForm] files uploaded:", files.map(f => ({ name: f.name, size: f.size, type: f.type })));
     if (files.length > 0) {
       setUploadedFile(files[0]);
     }

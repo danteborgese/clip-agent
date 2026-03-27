@@ -16,6 +16,8 @@ export function JobTracker({ jobId, onNewClip, onRetry }: JobTrackerProps) {
   const { job, error, loading } = useJobSubscription(jobId);
   const [cancelling, setCancelling] = useState(false);
 
+  console.log("[JobTracker] render", { jobId, loading, error, jobStatus: job?.status, jobStep: job?.step });
+
   // Loading state
   if (loading && !job) {
     return (

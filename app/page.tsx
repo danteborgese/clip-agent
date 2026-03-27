@@ -11,6 +11,8 @@ export default function Home() {
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [retryInputs, setRetryInputs] = useState<{ url: string; instruction: string } | null>(null);
 
+  console.log("[Home] render", { activeJobId, hasRetryInputs: !!retryInputs });
+
   return (
     <div className="flex min-h-screen w-full" style={{ background: "#0A0A0A" }}>
       <HeroPanel />
@@ -24,6 +26,7 @@ export default function Home() {
               <SubmitForm
                 key={retryInputs ? `retry-${Date.now()}` : "fresh"}
                 onJobCreated={(id) => {
+                  console.log("[Home] onJobCreated", id);
                   setRetryInputs(null);
                   setActiveJobId(id);
                 }}

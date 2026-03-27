@@ -13,6 +13,7 @@
     "lint:fix": "eslint --fix .",
     "run-job": "npx tsx scripts/run-job.ts",
     "run-pending": "npx tsx scripts/run-pending.ts",
+    "worker": "npx tsx scripts/worker-loop.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "capture-fixture": "npx tsx scripts/capture-fixture.ts",

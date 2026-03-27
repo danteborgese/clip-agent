@@ -36,6 +36,7 @@ export function useJobSubscription(jobId: string | null): JobSubscriptionState {
 
   const updateJob = useCallback(
     (newJob: Job) => {
+      console.log("[useJobSubscription] updateJob", { id: newJob.id, status: newJob.status, step: newJob.step, confidence: newJob.confidence });
       isTerminalRef.current = newJob.status === "done" || newJob.status === "failed" || newJob.status === "cancelled" || newJob.status === "needs_review";
       setState((prev) =>
         prev.id === jobId ? { ...prev, job: newJob, error: null, loading: false } : prev
@@ -54,6 +55,7 @@ export function useJobSubscription(jobId: string | null): JobSubscriptionState {
         .single();
 
       if (error) {
+        console.error("[useJobSubscription] fetchJob error:", error.message);
         setState((prev) =>
           prev.id === jobId
             ? { ...prev, error: `Failed to load job: ${error.message}`, loading: false }
@@ -62,6 +64,7 @@ export function useJobSubscription(jobId: string | null): JobSubscriptionState {
         return;
       }
       if (data) {
+        console.log("[useJobSubscription] fetchJob success", { status: (data as Job).status, step: (data as Job).step });
         updateJob(data as Job);
       }
     } catch (err) {
@@ -82,6 +85,7 @@ export function useJobSubscription(jobId: string | null): JobSubscriptionState {
     fetchJob();
 
     // Realtime subscription
+    console.log("[useJobSubscription] subscribing to realtime for job", jobId);
     const channel = supabase
       .channel(`job-${jobId}`)
       .on(
@@ -93,12 +97,15 @@ export function useJobSubscription(jobId: string | null): JobSubscriptionState {
           filter: `id=eq.${jobId}`,
         },
         (payload) => {
+          console.log("[useJobSubscription] realtime UPDATE received", { status: (payload.new as Job).status, step: (payload.new as Job).step });
           if (!cancelled) {
             updateJob(payload.new as Job);
           }
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        console.log("[useJobSubscription] channel status:", status);
+      });
 
     // Polling fallback — keeps UI in sync even if Realtime misses events
     const pollTimer = setInterval(() => {

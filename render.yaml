@@ -1,0 +1,51 @@
+services:
+  # Next.js web app
+  - type: web
+    name: clip-agent-web
+    runtime: node
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: NEXT_PUBLIC_SUPABASE_URL
+        sync: false
+      - key: NEXT_PUBLIC_SUPABASE_ANON_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: SUPABASE_CLIPS_BUCKET
+        value: clips
+      - key: NOTION_TOKEN
+        sync: false
+      - key: NOTION_CLIPS_DB_ID
+        sync: false
+      - key: YOUTUBE_API_KEY
+        sync: false
+
+  # Background pipeline worker
+  - type: worker
+    name: clip-agent-worker
+    runtime: docker
+    dockerfilePath: ./Dockerfile.worker
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: SUPABASE_CLIPS_BUCKET
+        value: clips
+      - key: NOTION_TOKEN
+        sync: false
+      - key: NOTION_CLIPS_DB_ID
+        sync: false
+      - key: YOUTUBE_API_KEY
+        sync: false
